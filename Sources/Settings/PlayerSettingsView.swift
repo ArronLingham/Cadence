@@ -45,7 +45,6 @@ struct PlayerSettingsView: View {
     @Default(.lyricsOffsetSeconds) private var lyricsOffset
     @Default(.lyricsTranslationEnabled) private var translateLyrics
     @Default(.musicSkipBehavior) private var skipBehavior
-    @Default(.spotifySPDCCookie) private var spotifyCookie
     @Default(.lyricsVisibleLines) private var lyricLines
     @Default(.colorExtractionMode) private var colourMode
     @Default(.sliderColor) private var sliderColour
@@ -147,11 +146,14 @@ struct PlayerSettingsView: View {
                 }
                 Text("Now Playing covers every app but needs a system API Apple removed in macOS 15.4.")
                     .font(.caption).foregroundStyle(.secondary)
-                if source == .spotify {
-                    SecureField("Spotify sp_dc cookie", text: $spotifyCookie)
-                    Text("Optional. Only needed for lyrics and Canvas artwork; playback works without it. A SecureField because this is a credential.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+            }
+
+            // The cookie's whole UI — sign-in sheet, status, validate, clear —
+            // lives in its own section. Anchor kept it separate for the same
+            // reason: it is the one control here that talks to the network and
+            // can fail, so it needs status and error rows the others do not.
+            if source == .spotify {
+                SpotifyAuthSettingsSection()
             }
         }
         .formStyle(.grouped)
