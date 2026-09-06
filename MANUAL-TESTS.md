@@ -237,10 +237,41 @@ this path, and it is the one feature that goes to the network.
 - [ ] Pause the music and leave it for a few minutes. **Watch CPU.** Anchor's
       lyric task woke once a second against paused playback for 0.24% of a core
       — the rule is to gate on the work existing, not the feature being on.
-- [ ] Spotify only: paste an **`sp_dc` cookie** in Settings → Player → Source.
-      Lyrics and Canvas should start working; playback should have worked
-      without it. **This is a credential — confirm it never appears in a log,
-      a crash report or `git status`.** This repo is public.
+### The Spotify session (new — ported this session, never run)
+
+Settings → Player → Source, with the source set to **Spotify**. None of this
+existed until now; the manager was here but nothing drove it.
+
+- [ ] **Sign in with Spotify.** Does the sheet open on Spotify's login page?
+- [ ] Sign in with email and password. Does the sheet **capture and close by
+      itself**, without you ever seeing the cookie? That is the whole point of
+      it — the `WKHTTPCookieStore` observer fires the moment `sp_dc` appears.
+- [ ] Does the status dot go **green** and the text say the session is good?
+- [ ] **Google accounts are deliberately blocked** in the sheet — it cancels the
+      navigation and tells you to use email, Apple, or Open in Browser. If yours
+      is a Google login, confirm you get that message rather than a dead white
+      page, then use the manual route below.
+- [ ] **Open in Browser** — does it open the web player?
+- [ ] **Reset Session** — does the sheet return to a logged-out login page?
+- [ ] Reopen the sheet after a successful capture. It is a `.nonPersistent()`
+      store, so you should have to **sign in again**. If you are still logged
+      in, the store is persisting when it should not and `Clear` is a lie.
+- [ ] **Validate Cookie** with a good cookie — green dot. Then corrupt a
+      character by hand and validate again: it must go **red with an error**,
+      not sit silently on the old green.
+- [ ] **Clear.** Does the dot go grey, the field empty, and lyrics stop?
+- [ ] **Paste from Clipboard** with a cookie copied. Does it sanitise a full
+      `sp_dc=…; sp_key=…` string down to just the value?
+- [ ] The **reveal eye**. Masked by default, shows on demand, and re-masks.
+- [ ] The manual route still works: **Get the cookie manually** disclosure →
+      DevTools → Application → Cookies → `open.spotify.com` → `sp_dc`.
+- [ ] Now the payoff: **lyrics** should start working, and **Canvas** should
+      switch on for tracks that have one. Canvas specifically was impossible
+      before this — `.spotifyCanvasSessionDidChange` had no reachable poster.
+- [ ] Playback should have worked all along **without** any of this.
+- [ ] **This is a credential — confirm it never appears in a log, a crash
+      report or `git status`.** This repo is public. The cookie lives in the
+      prefs plist, not the working tree.
 
 ## 8. The audio elements
 
