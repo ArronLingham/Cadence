@@ -31,17 +31,17 @@ attempt at this. Allow it, or dismiss it and let Cadence prompt you itself.
 
 - [ ] Play something in **Apple Music**. Title, artist, album and artwork all
       correct in the desktop player?
-- [ ] Does the progress bar advance smoothly, and do the times count up and
+- [X] Does the progress bar advance smoothly, and do the times count up and
       down correctly?
-- [ ] Press play / pause / next / previous **on the widget**. Does the music
+- [X] Press play / pause / next / previous **on the widget**. Does the music
       respond?
-- [ ] Does the record start turning on play and **hold its position** on pause,
+- [X] Does the record start turning on play and **hold its position** on pause,
       rather than snapping back to the top?
 - [ ] Drag the progress bar. Does it seek?
-- [ ] Click the **menu bar disc**. The first row should read
+- [X] Click the **menu bar disc**. The first row should read
       `Title — Artist` while playing, and `Nothing playing` when not. It is
       read on open rather than subscribed, so a stale title here is a real bug.
-- [ ] Place a **Track time** element (the one readout that flips). Click it —
+- [X] Place a **Track time** element (the one readout that flips). Click it —
       does it swap between elapsed and remaining and stay swapped?
 
 **All four sources, not just two.** Each is a different mechanism and only one
@@ -61,7 +61,7 @@ of them is event-driven the same way:
 - [ ] Play a **live stream** (a radio station) if you can find one. This is the
       one that crashed Anchor: a live stream reports a NaN duration and
       `Int(NaN)` traps. The times should read `--:--`, not crash.
-- [ ] Settings → Player → Elements → **Skip buttons**. Set it to seek rather
+- [X] Settings → Player → Elements → **Skip buttons**. Set it to seek rather
       than track and confirm next/previous scrub within the song instead of
       changing it.
 
@@ -75,16 +75,16 @@ coverage at all** — the style lives on the placement, so it is only reachable
 through the editor's inspector. Select the artwork element in
 Settings → Layout to get these controls.
 
-- [ ] Set **Album cover**. Is it a plain square with the right corners?
-- [ ] Set **Vinyl record**. Is the album art *round*, masked to the record, and
+- [X] Set **Album cover**. Is it a plain square with the right corners?
+- [X] Set **Vinyl record**. Is the album art *round*, masked to the record, and
       not a square sitting on a circle? That was a real bug —
       `CALayer.contents` from an `NSImage` honours neither `contentsGravity`
       nor the corner radius.
-- [ ] **Tonearm** on and off. Does it appear over the record and move?
-- [ ] **Progress ring around the record** on. Does it track playback? Turn it
+- [X] **Tonearm** on and off. Does it appear over the record and move?
+- [X] **Progress ring around the record** on. Does it track playback? Turn it
       on *and* place a separate progress bar — both should work, they are
       independent.
-- [ ] Turn the progress ring **off**. Does the artwork shrink to fill the space
+- [X] Turn the progress ring **off**. Does the artwork shrink to fill the space
       it no longer needs, rather than leaving an empty strip? That exact bug
       shipped in Anchor (`VinylWidgetSize.height` was a fixed ratio).
 - [ ] **Give each of the four surfaces a different style** — vinyl on the
