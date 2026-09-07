@@ -269,6 +269,53 @@ public enum GridSolver {
     ///
     /// Returns `nil` outside the content area. `row` may be one past the last
     /// occupied row, which is how you drag something onto a new bottom row.
+    /// Where a drop lands: on a cell, or in the seam BETWEEN two rows.
+    ///
+    /// The seam case is the whole reason this exists. `cell(at:)` can only
+    /// answer with an existing row index or one-past-the-end, so the only way
+    /// to make a row was to drop below everything — there was no way to insert
+    /// between two rows at all, and `normalisingRows` renumbers contiguously
+    /// after every edit so a gap cannot even be expressed transiently.
+    public enum DropTarget: Equatable, Sendable {
+        case cell(col: Int, row: Int)
+        /// Open a new row immediately before `before`, and land there.
+        case seam(col: Int, before: Int)
+    }
+
+    /// `seamBand` is how close to a row boundary counts as "between". It is
+    /// generous on purpose: a seam the width of a hairline is a seam nobody can
+    /// hit, and the reported symptom was that dragging felt finicky.
+    public static func dropTarget(
+        at point: CGPoint, geometry: GridGeometry, totalWidth: CGFloat,
+        rowHeights: [CGFloat], seamBand: CGFloat = 10
+    ) -> DropTarget? {
+        let columns = max(1, geometry.columns)
+        let cw = cellWidth(for: geometry, totalWidth: totalWidth)
+        guard cw > 0 else { return nil }
+        let x = point.x - geometry.padding
+        let col = min(columns - 1, max(0, Int(max(0, x) / (cw + geometry.gutter))))
+
+        // Row boundaries in the same coordinate space the renderer used.
+        var boundaries: [CGFloat] = [geometry.padding]
+        var y = geometry.padding
+        for height in rowHeights {
+            y += height
+            boundaries.append(y)
+            y += geometry.gutter
+        }
+
+        for (index, edge) in boundaries.enumerated() where abs(point.y - edge) <= seamBand {
+            // The seam above row 0 inserts at 0; the seam below the last row is
+            // just "append", which `cell` already handled, so both ends work.
+            return .seam(col: col, before: index)
+        }
+
+        guard let hit = cell(
+            at: point, geometry: geometry, totalWidth: totalWidth, rowHeights: rowHeights)
+        else { return nil }
+        return .cell(col: hit.col, row: hit.row)
+    }
+
     public static func cell(
         at point: CGPoint, geometry: GridGeometry, totalWidth: CGFloat, rowHeights: [CGFloat]
     ) -> (col: Int, row: Int)? {

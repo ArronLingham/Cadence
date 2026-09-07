@@ -438,3 +438,103 @@ extension SurfaceLayout {
         ])
 
 }
+
+// MARK: - Presets
+
+/// Named starting points, offered per surface in the layout editor.
+///
+/// Distinct from `PlayerLayouts.defaults`, which is what a first launch gets
+/// and what Reset restores. A preset is a deliberate choice the user makes;
+/// applying one is a normal, undoable edit.
+public struct LayoutPreset: Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let detail: String
+    public let layout: SurfaceLayout
+
+    /// What is on offer for a given surface. The shipped default is always
+    /// first, so "put it back the way it was" is never more than one click away
+    /// even after experimenting.
+    public static func all(for surface: PlayerSurface) -> [LayoutPreset] {
+        var presets: [LayoutPreset] = [
+            LayoutPreset(
+                id: "default", name: "As shipped",
+                detail: "The layout Cadence starts with.",
+                layout: PlayerLayouts.defaults[surface])
+        ]
+        switch surface {
+        case .desktop:
+            presets.append(contentsOf: [.compactDesktop, .artworkOnly, .fullDesktop])
+        case .lockWidget:
+            presets.append(contentsOf: [.compactDesktop])
+        case .lockFull, .launcher:
+            break
+        }
+        return presets
+    }
+
+    /// Artwork, title, transport. Nothing else — the smallest thing that is
+    /// still a player.
+    static let compactDesktop = LayoutPreset(
+        id: "compact", name: "Compact",
+        detail: "Artwork, title and transport only.",
+        layout: SurfaceLayout(
+            geometry: GridGeometry(columns: 6),
+            placements: [
+                ElementPlacement(
+                    element: .artwork, col: 0, row: 0, colSpan: 2, rowSpan: 2,
+                    priority: 0, artworkStyle: .vinyl),
+                ElementPlacement(element: .title, col: 2, row: 0, colSpan: 4, priority: 1),
+                ElementPlacement(element: .artist, col: 2, row: 1, colSpan: 4, priority: 2),
+                ElementPlacement(element: .previous, col: 2, row: 2, colSpan: 1, priority: 3),
+                ElementPlacement(element: .playPause, col: 3, row: 2, colSpan: 2, priority: 0),
+                ElementPlacement(element: .next, col: 5, row: 2, colSpan: 1, priority: 3),
+            ]))
+
+    /// Just the record, with the transport revealed on hover as an overlay so
+    /// the card never changes size.
+    static let artworkOnly = LayoutPreset(
+        id: "artwork", name: "Artwork only",
+        detail: "The record alone. Controls appear over it on hover.",
+        layout: SurfaceLayout(
+            geometry: GridGeometry(columns: 6),
+            placements: [
+                ElementPlacement(
+                    element: .artwork, col: 0, row: 0, colSpan: 6, rowSpan: 4,
+                    priority: 0,
+                    artworkStyle: ArtworkStyle(
+                        kind: .vinyl, showsStylus: true, showsProgressRing: true)),
+                ElementPlacement(
+                    element: .previous, col: 1, row: 3, colSpan: 1, layer: .overlay,
+                    visibility: .onHover, priority: 4),
+                ElementPlacement(
+                    element: .playPause, col: 2, row: 3, colSpan: 2, layer: .overlay,
+                    visibility: .onHover, priority: 0),
+                ElementPlacement(
+                    element: .next, col: 4, row: 3, colSpan: 1, layer: .overlay,
+                    visibility: .onHover, priority: 4),
+            ]))
+
+    /// Everything worth having on a desktop card, priorities ordered so it
+    /// degrades sensibly as it shrinks.
+    static let fullDesktop = LayoutPreset(
+        id: "full", name: "Everything",
+        detail: "Artwork, text, transport, progress, times, shuffle and repeat.",
+        layout: SurfaceLayout(
+            geometry: GridGeometry(columns: 6),
+            placements: [
+                ElementPlacement(
+                    element: .artwork, col: 0, row: 0, colSpan: 2, rowSpan: 2,
+                    priority: 0, artworkStyle: .vinyl),
+                ElementPlacement(element: .title, col: 2, row: 0, colSpan: 4, priority: 1),
+                ElementPlacement(element: .artist, col: 2, row: 1, colSpan: 4, priority: 3),
+                ElementPlacement(element: .album, col: 0, row: 2, colSpan: 6, priority: 6),
+                ElementPlacement(element: .progressBar, col: 0, row: 3, colSpan: 6, priority: 2),
+                ElementPlacement(element: .timeElapsed, col: 0, row: 4, colSpan: 1, priority: 5),
+                ElementPlacement(element: .shuffle, col: 1, row: 4, colSpan: 1, priority: 7),
+                ElementPlacement(element: .previous, col: 2, row: 4, colSpan: 1, priority: 4),
+                ElementPlacement(element: .playPause, col: 3, row: 4, colSpan: 1, priority: 0),
+                ElementPlacement(element: .next, col: 4, row: 4, colSpan: 1, priority: 4),
+                ElementPlacement(element: .timeRemaining, col: 5, row: 4, colSpan: 1, priority: 5),
+            ]))
+}

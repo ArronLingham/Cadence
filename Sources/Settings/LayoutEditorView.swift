@@ -39,7 +39,13 @@ struct LayoutEditorView: View {
     @Default(.coloredSpectrogram) private var colouredBars
     @Default(.accentColor) private var accentColour
     @State private var surface: PlayerSurface = .desktop
+    /// The element the inspector edits. Always a member of `selectedIDs` when
+    /// anything is selected.
     @State private var selection: UUID?
+    /// Everything highlighted. Inspector edits, nudges and delete apply to all
+    /// of it, so ⌘-click lets you set the priority of six buttons at once
+    /// rather than six times.
+    @State private var selectedIDs: Set<UUID> = []
     @State private var dragging: UUID?
     @State private var hoverPreview = false
     @StateObject private var history = LayoutHistory()
@@ -112,6 +118,7 @@ struct LayoutEditorView: View {
         }
         .onKeyPress(.escape) {
             selection = nil
+            selectedIDs = []
             return .handled
         }
         // Both cases. With Shift held the reported character is "Z", so a set
@@ -148,14 +155,24 @@ struct LayoutEditorView: View {
     }
 
     private func deleteSelection() -> KeyPress.Result {
-        guard let id = selection else { return .ignored }
-        remove(id)
+        guard selection != nil || !selectedIDs.isEmpty else { return .ignored }
+        removeSelected()
         return .handled
     }
 
     private func remove(_ id: UUID) {
         edit { $0.placements.removeAll { $0.id == id } }
         selection = nil
+        selectedIDs = []
+    }
+
+    /// One undo step for the whole selection, not one per element.
+    private func removeSelected() {
+        let doomed = selectedIDs.isEmpty ? Set([selection].compactMap { $0 }) : selectedIDs
+        guard !doomed.isEmpty else { return }
+        edit { $0.placements.removeAll { doomed.contains($0.id) } }
+        selection = nil
+        selectedIDs = []
     }
 
     // MARK: Surface picker
@@ -210,6 +227,27 @@ struct LayoutEditorView: View {
             .disabled(!history.canRedo(surface))
             .help("Redo (⇧⌘Z)")
 
+            Menu {
+                ForEach(LayoutPreset.all(for: surface)) { preset in
+                    Button {
+                        // A normal edit, so ⌘Z takes it back — applying a
+                        // preset should never be the one action you cannot undo.
+                        edit { $0 = preset.layout }
+                        selection = nil
+                        selectedIDs = []
+                        if surface == .desktop { Defaults[.playerHeightBudget] = 0 }
+                    } label: {
+                        Text(preset.name)
+                        Text(preset.detail)
+                    }
+                }
+            } label: {
+                Label("Presets", systemImage: "square.grid.2x2")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Replace this surface with a ready-made arrangement. Undoable.")
+
             Button("Reset") {
                 // Reset is recorded too, so it is undoable. Losing an arranged
                 // surface to a mis-click on Reset would be worse than the
@@ -217,6 +255,7 @@ struct LayoutEditorView: View {
                 history.record(layout, for: surface)
                 layout = PlayerLayouts.defaults[surface]
                 selection = nil
+                selectedIDs = []
                 // The height budget is part of "how this surface currently
                 // looks" even though it is not part of the layout. Resetting
                 // without clearing it restored every placement and then let the
@@ -366,7 +405,7 @@ struct LayoutEditorView: View {
         resolved: GridSolver.ResolvedLayout, width: CGFloat
     ) -> some View {
         ForEach(resolved.elements, id: \.placement.id) { element in
-            let isSelected = selection == element.placement.id
+            let isSelected = selectedIDs.contains(element.placement.id)
             let isHidden = element.placement.visibility == .onHover && !hoverPreview
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(
@@ -382,11 +421,31 @@ struct LayoutEditorView: View {
                 )
                 .frame(width: element.frame.width, height: element.frame.height)
                 .offset(x: element.frame.minX, y: element.frame.minY)
-                .onTapGesture { selection = element.placement.id }
+                .onTapGesture {
+                    // Modifiers read from NSEvent rather than a
+                    // `TapGesture().modifiers(.command)`, which competes with
+                    // the plain tap and makes plain clicks unreliable.
+                    if NSEvent.modifierFlags.contains(.command) {
+                        let id = element.placement.id
+                        if selectedIDs.contains(id) {
+                            selectedIDs.remove(id)
+                            if selection == id { selection = selectedIDs.first }
+                        } else {
+                            selectedIDs.insert(id)
+                            selection = id
+                        }
+                    } else {
+                        selection = element.placement.id
+                        selectedIDs = [element.placement.id]
+                    }
+                }
                 .gesture(
                     DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.surfaceSpace))
                         .onChanged { _ in
-                            selection = element.placement.id
+                            if !selectedIDs.contains(element.placement.id) {
+                                selection = element.placement.id
+                                selectedIDs = [element.placement.id]
+                            }
                             dragging = element.placement.id
                         }
                         .onEnded { value in
@@ -409,11 +468,37 @@ struct LayoutEditorView: View {
         _ id: UUID, to point: CGPoint, resolved: GridSolver.ResolvedLayout, width: CGFloat
     ) {
         guard
-            let cell = GridSolver.cell(
+            let target = GridSolver.dropTarget(
                 at: point, geometry: layout.geometry, totalWidth: width,
                 rowHeights: resolved.rowHeights),
             let index = layout.placements.firstIndex(where: { $0.id == id })
         else { return }
+
+        // Dropping in the seam between two rows OPENS a row there. Everything
+        // at or below the seam shifts down first, so the moved element lands in
+        // genuinely empty space and can never be refused for overlapping.
+        if case let .seam(col, before) = target {
+            var updated = layout
+            for i in updated.placements.indices where updated.placements[i].row >= before {
+                updated.placements[i].row += 1
+            }
+            guard let movedIndex = updated.placements.firstIndex(where: { $0.id == id })
+            else { return }
+            var inserted = updated.placements[movedIndex]
+            // It shifted with everything else; put it in the new empty row.
+            inserted.row = before
+            inserted.col = max(0, min(col, layout.geometry.columns - inserted.colSpan))
+            // An overlay in a row of its own has no base to sit on and the
+            // solver would drop it as an orphan, so a seam drop is a base-only
+            // gesture. Refusing leaves it where it was, visibly.
+            guard inserted.layer == .base else { return }
+            updated.placements[movedIndex] = inserted
+            edit { $0 = updated }
+            return
+        }
+
+        guard case let .cell(cellCol, cellRow) = target else { return }
+        let cell = (col: cellCol, row: cellRow)
 
         var moved = layout.placements[index]
         // `resolved` here is the full-set solve, whose rows are the stored rows
@@ -459,8 +544,14 @@ struct LayoutEditorView: View {
     private var palette: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Add an element").font(.caption).foregroundStyle(.secondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+            // A wrapping grid, not a horizontal strip. 24 tiles at 64pt plus
+            // spacing is 1674pt of content; the pane is 392pt at its minimum,
+            // so 19 of the 24 elements could only be reached by scrolling
+            // sideways — and a plain mouse has no horizontal wheel. This
+            // reflows to zero scrolling as the window widens, and scrolls
+            // VERTICALLY when it cannot.
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVGrid(columns: Self.paletteColumns, spacing: 6) {
                     ForEach(PlayerElement.allCases, id: \.self) { element in
                         Button {
                             add(element)
@@ -472,7 +563,7 @@ struct LayoutEditorView: View {
                                     .font(.system(size: 9))
                                     .lineLimit(1)
                             }
-                            .frame(width: 64, height: 42)
+                            .frame(maxWidth: .infinity, minHeight: 42)
                             .background(
                                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                                     .fill(Color.primary.opacity(0.07)))
@@ -483,9 +574,13 @@ struct LayoutEditorView: View {
                 }
                 .padding(.vertical, 2)
             }
-            .frame(height: 52)
+            .frame(maxHeight: 116)
         }
     }
+
+    private static let paletteColumns = [
+        GridItem(.adaptive(minimum: 68, maximum: 110), spacing: 6)
+    ]
 
     /// Place a new element in the first free cell, or on a new bottom row if
     /// there is none.
@@ -545,7 +640,17 @@ struct LayoutEditorView: View {
                         minimum, layout.geometry.columns - layout.placements[index].col)
                     Stepper(
                         "Width: \(layout.placements[index].colSpan) of \(layout.geometry.columns)",
-                        value: binding(index, \.colSpan), in: minimum...maximum)
+                        value: binding(index, \.colSpan, appliesToSelection: false),
+                        in: minimum...maximum)
+
+                    // Height in ROWS. A span that is legal here can overflow
+                    // the grid for another element further right, so like
+                    // width it never fans out across a multi-selection.
+                    Stepper(
+                        "Height: \(layout.placements[index].rowSpan) row\(layout.placements[index].rowSpan == 1 ? "" : "s")",
+                        value: binding(index, \.rowSpan, appliesToSelection: false), in: 1...6)
+                    Text("Taller than one row lets an element sit beside a stack of others — how the full-screen player puts lyrics next to the artwork.")
+                        .font(.caption).foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 3) {
                         Stepper(
@@ -585,9 +690,13 @@ struct LayoutEditorView: View {
 
                     Divider()
                     Button(role: .destructive) {
-                        remove(id)
+                        removeSelected()
                     } label: {
-                        Label("Remove from this surface", systemImage: "trash")
+                        Label(
+                            selectedIDs.count > 1
+                                ? "Remove \(selectedIDs.count) elements"
+                                : "Remove from this surface",
+                            systemImage: "trash")
                     }
 
                     Spacer(minLength: 0)
@@ -609,12 +718,31 @@ struct LayoutEditorView: View {
         }
     }
 
+    /// Reads from the primary selection, writes to ALL of it.
+    ///
+    /// Setting a priority or a visibility with six buttons ⌘-selected should
+    /// set six priorities. Span is deliberately excluded from the fan-out by
+    /// its caller, because a span that is legal for one element can overflow
+    /// the grid for another sitting further right.
     private func binding<Value>(
-        _ index: Int, _ path: WritableKeyPath<ElementPlacement, Value>
+        _ index: Int, _ path: WritableKeyPath<ElementPlacement, Value>,
+        appliesToSelection: Bool = true
     ) -> Binding<Value> {
         Binding(
             get: { layouts[surface].placements[index][keyPath: path] },
-            set: { layouts[surface].placements[index][keyPath: path] = $0 })
+            set: { newValue in
+                let targets = appliesToSelection ? selectedIDs : []
+                edit { draft in
+                    if targets.count > 1 {
+                        for i in draft.placements.indices
+                        where targets.contains(draft.placements[i].id) {
+                            draft.placements[i][keyPath: path] = newValue
+                        }
+                    } else if draft.placements.indices.contains(index) {
+                        draft.placements[index][keyPath: path] = newValue
+                    }
+                }
+            })
     }
 }
 

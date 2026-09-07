@@ -562,6 +562,33 @@ ok("default ids are unique within a surface",
 // ---------------------------------------------------------------------------
 print("")
 
+print("Presets")
+
+// Presets are layout DATA, and data can be wrong in exactly the ways the
+// shipped defaults are checked for. A preset that overlaps or overflows would
+// be silently repaired by the solver, so the user would apply "Everything" and
+// quietly get less than everything.
+for surface in PlayerSurface.allCases {
+    for preset in LayoutPreset.all(for: surface) {
+        let name = "\(surface) / \(preset.name)"
+        let g = preset.layout.geometry
+        ok("\(name): nothing overflows the grid",
+           preset.layout.placements.allSatisfy { $0.col >= 0 && $0.col + $0.colSpan <= g.columns })
+        ok("\(name): every span meets its minimum",
+           preset.layout.placements.allSatisfy { $0.colSpan >= $0.element.metrics.minSpan })
+        ok("\(name): no two base placements overlap",
+           preset.layout.placements.filter { $0.layer == .base }.count
+               == GridSolver.solve(
+                   layout: preset.layout,
+                   available: CGSize(width: 600, height: 5000), hovering: true
+               ).elements.filter { $0.placement.layer == .base }.count)
+        ok("\(name): something survives the smallest size",
+           !GridSolver.solve(
+               layout: preset.layout, available: CGSize(width: 140, height: 80),
+               hovering: false).elements.isEmpty)
+    }
+}
+
 print("Row spanning")
 
 // `rowSpan` was described in this project's notes long before any code
@@ -734,6 +761,10 @@ swiftc -O -o "$WORK/tests" \
 #
 #   PlayerLayouts.init(from:) -> plain synthesised Decodable
 #       66/70 — "a missing surface falls back to its default"
+#
+#   DefaultLayouts -> overlap two placements in the Compact preset
+#       => "no two base placements overlap" FAILS for every surface that
+#          offers it  (132/134)
 #
 #   ElementPlacement.canPlace -> `existing.row == candidate.row` instead of
 #       `existing.rows.overlaps(candidate.rows)`
