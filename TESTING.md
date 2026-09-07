@@ -242,6 +242,33 @@ belongs in the settings pane instead.
 renderer for a placeable element, and observing a notification nothing posts
 each make it fail.
 
+`scripts/audit-main-actor.sh` — finds a `@Published` mutated from a bare
+`Task {}` in a type that is not itself `@MainActor`.
+
+This is a deadlock, not a style rule. `MusicManager.updateIdleState` debounced
+with a bare `Task {}`, so it mutated `isPlayerIdle` on the cooperative pool.
+Combine takes its publisher lock to send; SwiftUI's subscriber then tries to
+sync onto main to invalidate the attribute; if main is inside its own publish it
+is already waiting for that same lock. Neither side times out and neither
+crashes — **the app simply stops**, and because it is a menu-bar agent it is not
+listed in Force Quit and cannot be quit from the UI. It had to be killed by pid.
+
+`hang-sample-2026-09-07.txt` is the sample: 2547 of 2547 frames in
+`_os_unfair_lock_lock_slow`. It survived every automated check in this file,
+because it needs a playback state change on main to land inside the three-second
+idle debounce — and nothing here had seen a real track.
+
+**If it ever hangs again**, Force Quit will not list it:
+
+```bash
+pkill -f 'Cadence.app/Contents/MacOS/Cadence'
+# and to capture why, BEFORE killing:
+sample $(pgrep -f 'Cadence.app/Contents/MacOS/Cadence' | head -1) 3 -f /tmp/cadence-hang.txt
+```
+
+**Proved non-vacuous.** Reinstating the bare `Task {}` turns it red and names
+the line. It scans 17 publishing files and found exactly one offender.
+
 ## Stress
 
 `tests/run_runtime_stress.sh` — **LIVE**, and not part of the unit run. It
