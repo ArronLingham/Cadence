@@ -87,11 +87,11 @@ Settings → Layout to get these controls.
 - [X] Turn the progress ring **off**. Does the artwork shrink to fill the space
       it no longer needs, rather than leaving an empty strip? That exact bug
       shipped in Anchor (`VinylWidgetSize.height` was a fixed ratio).
-- [ ] **Give each of the four surfaces a different style** — vinyl on the
+- [X] **Give each of the four surfaces a different style** — vinyl on the
       desktop, plain cover on the lock screen. They must not follow each other.
       Anchor had these as four global booleans; this is the test that they are
       no longer global.
-- [ ] Does the record **swell or jump** when you drag the window between
+- [X] Does the record **swell or jump** when you drag the window between
       displays, or when the window resizes? It should not — `layout()` runs
       inside a `CATransaction` with actions disabled specifically to stop that.
 
@@ -103,8 +103,14 @@ You can preview both surfaces **without locking** from a Debug build, which is
 worth doing first so a failure below is unambiguous:
 
 ```bash
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LOCK=widget
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LOCK=full
+# Resolve the Debug build directory rather than hard-coding a DerivedData hash.
+# The preview hooks are compiled out of Release, so this must be a Debug build.
+DEBUG_APP="$(xcodebuild -project Cadence.xcodeproj -scheme Cadence \
+  -configuration Debug -showBuildSettings 2>/dev/null \
+  | sed -n 's/^ *BUILT_PRODUCTS_DIR = //p' | tr -d '\r' | head -1)/Cadence.app"
+
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LOCK=widget
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LOCK=full
 ```
 
 - [ ] Turn it on: Settings → Player → **Show on the lock screen**.
@@ -300,8 +306,8 @@ preview, and rendering it is the only thing standing between "built" and
 "built and never once looked at":
 
 ```bash
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LAUNCHER=1      # controls on hover
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LAUNCHER=hover  # always visible
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LAUNCHER=1      # controls on hover
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LAUNCHER=hover  # always visible
 ```
 
 - [ ] Does it draw, on `.regularMaterial`, at the right size?
@@ -319,9 +325,15 @@ open -n <build>/Cadence.app --env CADENCE_PREVIEW_LAUNCHER=hover  # always visib
 
 ## 10. Two displays
 
-I have not tested any of this; there is one screen attached here. **Check what
-is actually plugged in before writing this off** — Anchor's notes record two
-sessions that wrote "needs a monitor" while one was connected.
+**You have two displays right now** — the built-in Retina and an external
+EK271 GD sitting to the left at x=-1920 — so all of this is testable today.
+An earlier draft of this file said one screen was attached, which is exactly
+the mistake CLAUDE.md warns about: Anchor's notes record two sessions that
+wrote "needs a monitor" while one was connected. Check before writing it off.
+
+The desktop player's saved frame is currently `-1277 484 320 490` on the
+external display, which is where it should be — negative x is the second
+monitor, not off-screen.
 
 - [ ] Drag the player to a second display. Does it stay there?
 - [ ] Unplug that display. Does the player come back onto the remaining one, or

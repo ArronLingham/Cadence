@@ -40,8 +40,14 @@ Both surfaces are the same `PlayerSurfaceView` as the desktop player, against
 their own layouts. Preview them **without locking the machine**:
 
 ```bash
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LOCK=widget
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LOCK=full
+# Resolve the Debug build directory rather than hard-coding a DerivedData hash.
+# The preview hooks are compiled out of Release, so this must be a Debug build.
+DEBUG_APP="$(xcodebuild -project Cadence.xcodeproj -scheme Cadence \
+  -configuration Debug -showBuildSettings 2>/dev/null \
+  | sed -n 's/^ *BUILT_PRODUCTS_DIR = //p' | tr -d '\r' | head -1)/Cadence.app"
+
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LOCK=widget
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LOCK=full
 ```
 
 Debug only. `scripts/check-debug-hooks.sh` asserts it is compiled out of
@@ -74,8 +80,8 @@ so it had been built, committed and **never once rendered**, which is the
 It has a Debug preview now:
 
 ```bash
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LAUNCHER=1      # hover-only controls
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LAUNCHER=hover  # always visible
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LAUNCHER=1      # controls on hover
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LAUNCHER=hover  # always visible
 ```
 
 Verified: the card draws at 220pt on `.regularMaterial` with the right corner
