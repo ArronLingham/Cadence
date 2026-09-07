@@ -31,6 +31,8 @@ struct PlayerSettingsView: View {
     @Default(.playerBackgroundOpacity) private var opacity
     @Default(.hoverGrowsWidget) private var hoverGrows
     @Default(.playerFollowsSpaces) private var followsSpaces
+    @Default(.volumeControlsApp) private var volumeControlsApp
+    @Default(.playerUsesGlass) private var usesGlass
     @Default(.enableLockScreenWidget) private var lockEnabled
     @Default(.lockWidgetWidth) private var lockWidth
     @Default(.lockFullBackground) private var lockBackground
@@ -75,6 +77,7 @@ struct PlayerSettingsView: View {
                 Picker("Position", selection: $windowLevel) {
                     ForEach(PlayerWindowLevel.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
+                Toggle("Liquid glass background", isOn: $usesGlass)
                 Toggle("Tint with the album colour", isOn: $tinted)
                 Picker("Colour taken from the artwork by", selection: $colourMode) {
                     Text("Average").tag(ColorExtractionMode.legacy)
@@ -106,8 +109,11 @@ struct PlayerSettingsView: View {
                     Text("\(Int(lockWidth))").monospacedDigit().frame(width: 42)
                 }
                 HStack {
+                    // -600 rather than -240: 240 could not clear the login
+                    // field on a Retina display, which is exactly where the
+                    // widget needs to go to sit below it.
                     Text("Vertical offset")
-                    Slider(value: $lockOffset, in: -240...240)
+                    Slider(value: $lockOffset, in: -600...600)
                     Text("\(Int(lockOffset))").monospacedDigit().frame(width: 42)
                 }
                 Toggle("Use Spotify Canvas video when there is one", isOn: $canvasVideo)
@@ -121,6 +127,9 @@ struct PlayerSettingsView: View {
                     ForEach(MusicSkipBehavior.allCases) { Text($0.displayName).tag($0) }
                 }
                 Stepper("Visualiser bars: \(visualizerBars)", value: $visualizerBars, in: 2...12)
+                Toggle("Volume slider controls the app, not the Mac", isOn: $volumeControlsApp)
+                Text("Sets Spotify's or Music's own volume. Sources with no scriptable volume fall back to the system slider.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Colour the visualiser from the album", isOn: $colouredSpectrogram)
                 Toggle("Real-time waveform", isOn: $realTimeWaveform)
                 Text("Reads system audio through a CoreAudio tap, and only while a visualiser is on screen.")

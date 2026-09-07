@@ -296,6 +296,9 @@ private struct PlayerRootView: View {
     @Default(.playerLayouts) private var layouts
     @Default(.playerTintsWithAlbum) private var tinted
     @Default(.playerBackgroundOpacity) private var backgroundOpacity
+    @Default(.sliderColor) private var sliderColour
+    @Default(.playerUsesGlass) private var usesGlass
+    @Default(.accentColor) private var accentColour
 
     @State private var showingCloseChoice = false
 
@@ -304,7 +307,8 @@ private struct PlayerRootView: View {
             layout: layouts.desktop,
             style: .forSurface(
                 .desktop, albumColor: music.avgColor, tinted: tinted && music.hasTrack,
-                scale: layouts.desktop.geometry.contentScale),
+                scale: layouts.desktop.geometry.contentScale,
+                sliderColor: sliderColour, accentColor: accentColour),
             hovering: manager.isHovering
         )
         .background(card)
@@ -313,12 +317,25 @@ private struct PlayerRootView: View {
         .animation(.easeInOut(duration: 0.35), value: music.avgColor)
     }
 
-    private var card: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(cardColor.opacity(backgroundOpacity))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+    @ViewBuilder private var card: some View {
+        // Liquid glass is the same public `glassEffect` the lock screen uses —
+        // the API the macOS 26 floor was chosen for — which had exactly one
+        // caller and was unreachable from the surface people actually look at.
+        // The tint still applies over the top, at a low opacity, so an album
+        // still colours the card without turning the glass into a flat fill.
+        if usesGlass, #available(macOS 26.0, *) {
+            Color.clear
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(cardColor.opacity(backgroundOpacity * 0.35)))
+        } else {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(cardColor.opacity(backgroundOpacity))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        }
     }
 
     private var cardColor: Color {

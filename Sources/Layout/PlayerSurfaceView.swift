@@ -17,6 +17,7 @@
  */
 
 import AppKit
+import Defaults
 import SwiftUI
 
 /// Draws one surface from its `SurfaceLayout`.
@@ -99,22 +100,60 @@ struct SurfaceStyle {
     var ink: Color
     var subtleInk: Color
     var accent: Color
+    /// What the progress bar and ring are drawn in.
+    ///
+    /// `sliderColor` was a live setting with three options whose only reader in
+    /// the whole tree was `RealTimeWaveformScrubberView` — a view that is only
+    /// on screen when the real-time waveform is enabled AND a visualiser is
+    /// placed. The ordinary progress bar hardcoded `ink`, so the picker did
+    /// nothing for the element it names. Resolved once here rather than at each
+    /// call site so the bar and the ring can never disagree.
+    var progress: Color
     /// Multiplies every font size. Comes from the layout's own
     /// `GridGeometry.contentScale`, which also drives the row heights — two
     /// separate constants is how a 24pt title ended up in a 20pt row.
     var textScale: CGFloat
 
+    /// `sliderColor` is a PARAMETER, not a `Defaults` read inside this function.
+    ///
+    /// A bare `Defaults[...]` here would be read during body evaluation and
+    /// therefore never observed, so changing the picker would not redraw
+    /// anything until some unrelated publish happened to refresh the view —
+    /// which looks exactly like "progress bar colour doesn't change". Every
+    /// caller holds it in an `@Default` property and passes it in.
     static func forSurface(
-        _ surface: PlayerSurface, albumColor: NSColor, tinted: Bool, scale: CGFloat
+        _ surface: PlayerSurface, albumColor: NSColor, tinted: Bool, scale: CGFloat,
+        sliderColor: SliderColorEnum = .white, accentColor: Color = .blue
     ) -> SurfaceStyle {
         let ink: Color =
             tinted
             ? (SurfaceStyle.isLight(SurfaceStyle.muted(albumColor))
                 ? .black.opacity(0.82) : .white.opacity(0.92))
             : .white
+        let progress: Color
+        switch sliderColor {
+        case .white: progress = ink
+        case .albumArt: progress = Color(nsColor: SurfaceStyle.vivid(albumColor))
+        case .accent: progress = accentColor
+        }
         return SurfaceStyle(
             ink: ink, subtleInk: ink.opacity(0.55), accent: Color(nsColor: albumColor),
-            textScale: scale)
+            progress: progress, textScale: scale)
+    }
+
+    /// The album colour with enough saturation left to read as a colour.
+    ///
+    /// `muted` exists to stop a background shouting; using it for the bar as
+    /// well would make "Match album art" almost indistinguishable from white on
+    /// a tinted card, which is the complaint that "progress bar colour doesn't
+    /// change" partly describes.
+    static func vivid(_ color: NSColor) -> NSColor {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return .white }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        return NSColor(
+            hue: hue, saturation: max(saturation, 0.55),
+            brightness: max(brightness, 0.85), alpha: alpha)
     }
 
     /// Clamp saturation and brightness so an album's colour is a background
@@ -217,7 +256,13 @@ struct PlayerElementView: View {
     /// Before this, a span-6 placement rendered a 13pt speech-bubble glyph in
     /// the middle of an empty half-screen.
     @ViewBuilder private var lyrics: some View {
-        if placement.colSpan >= 3 {
+        // Threshold was 3, so on any surface where the user gave lyrics a
+        // narrow slot they silently got a TOGGLE BUTTON instead of words —
+        // which is why lyrics "work on the full-screen lock screen but not on
+        // anything else". Two columns is enough for a line of text; only a
+        // genuinely 1-column slot falls back to the button, and that fallback
+        // is now the documented behaviour rather than a surprise.
+        if placement.colSpan >= 2 {
             if data.hasSyncedLyrics {
                 SyncedLyricsList(
                     currentSize: 15 * style.textScale, otherSize: 12 * style.textScale,
@@ -287,7 +332,7 @@ struct PlayerElementView: View {
             Circle()
                 .trim(from: 0, to: fraction(at: context.date))
                 .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .foregroundStyle(style.ink.opacity(0.85))
+                .foregroundStyle(style.progress.opacity(0.9))
                 .rotationEffect(.degrees(-90))
                 .frame(width: side * 1.045, height: side * 1.045)
         }
@@ -383,7 +428,7 @@ struct PlayerElementView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(style.ink.opacity(0.22))
-                    Capsule().fill(style.ink.opacity(0.85))
+                    Capsule().fill(style.progress.opacity(0.9))
                         .frame(
                             width: geo.size.width
                                 * (scrubFraction ?? fraction(at: context.date)))

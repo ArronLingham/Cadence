@@ -73,6 +73,17 @@ extension Defaults.Keys {
     /// the switch.
     static let playerFollowsSpaces = Key<Bool>("playerFollowsSpaces", default: false)
 
+    /// Whether the Volume element drives the PLAYER's own volume rather than
+    /// the Mac's. Off keeps the previous behaviour (system output volume).
+    static let volumeControlsApp = Key<Bool>("volumeControlsApp", default: false)
+
+    /// Desktop player background: a tinted card, or liquid glass.
+    ///
+    /// Glass was reachable only on the lock screen, even though the same
+    /// `glassEffect` call works anywhere and it is the reason the deployment
+    /// target is macOS 26.
+    static let playerUsesGlass = Key<Bool>("playerUsesGlass", default: false)
+
     /// Show Cadence in the Dock and the ⌘Tab switcher.
     ///
     /// Off by default because a menu-bar music player that occupies a Dock slot

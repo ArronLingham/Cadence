@@ -214,6 +214,8 @@ private struct LockScreenRootView: View {
 
     @Default(.playerLayouts) private var layouts
     @Default(.lockFullBackground) private var background
+    @Default(.sliderColor) private var sliderColour
+    @Default(.accentColor) private var accentColour
 
     var body: some View {
         if manager.isImmersive {
@@ -243,7 +245,8 @@ private struct LockScreenRootView: View {
         PlayerSurfaceView(
             layout: layouts.lockWidget,
             style: .forSurface(.lockWidget, albumColor: music.avgColor, tinted: false,
-                               scale: layouts.lockWidget.geometry.contentScale)
+                               scale: layouts.lockWidget.geometry.contentScale,
+                               sliderColor: sliderColour, accentColor: accentColour)
         )
         .background(glass)
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -281,7 +284,8 @@ private struct LockScreenRootView: View {
             PlayerSurfaceView(
                 layout: layouts.lockFull,
                 style: .forSurface(.lockFull, albumColor: music.avgColor, tinted: false,
-                                   scale: layouts.lockFull.geometry.contentScale))
+                                   scale: layouts.lockFull.geometry.contentScale,
+                                   sliderColor: sliderColour, accentColor: accentColour))
         }
         .ignoresSafeArea()
         // Deliberately a SINGLE tap, plus Escape (see `LockPanel`), plus the

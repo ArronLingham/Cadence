@@ -605,6 +605,16 @@ class MusicManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // The extraction mode changes how `prominentOpposingColors` reads the
+        // artwork, but the colour is only computed when the ARTWORK changes —
+        // so flipping Average/Most vibrant did nothing visible until the next
+        // track, which reads as the two settings being identical. Recompute in
+        // place instead.
+        Defaults.publisher(.colorExtractionMode)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.calculateAverageColor() }
+            .store(in: &cancellables)
+
         // Observe Pear Desktop launch/terminate for auto-detection
         setupPearDesktopAutoDetection()
 
@@ -1197,9 +1207,14 @@ class MusicManager: ObservableObject {
         workItem = DispatchWorkItem { [weak self] in
             withAnimation(.smooth) {
                 self?.albumArt = newAlbumArt
-                if Defaults[.coloredSpectrogram] {
-                    self?.calculateAverageColor()
-                }
+                // Unconditional. `coloredSpectrogram` used to gate this, but
+                // that key is labelled "colour the visualiser from the album"
+                // and gating extraction here starved everything ELSE that needs
+                // the colour — the card tint, "Match album art" on the progress
+                // bar, the lock-screen background. Turning a visualiser option
+                // off is not consent to stop knowing what colour the album is.
+                // The visualiser reads the key itself, where it belongs.
+                self?.calculateAverageColor()
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem!)

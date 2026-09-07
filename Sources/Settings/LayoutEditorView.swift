@@ -34,6 +34,10 @@ import SwiftUI
 /// without waiting for a song that has one.
 struct LayoutEditorView: View {
     @Default(.playerLayouts) private var layouts
+    @Default(.sliderColor) private var sliderColour
+    @Default(.visualizerBarCount) private var visualizerBars
+    @Default(.coloredSpectrogram) private var colouredBars
+    @Default(.accentColor) private var accentColour
     @State private var surface: PlayerSurface = .desktop
     @State private var selection: UUID?
     @State private var dragging: UUID?
@@ -287,7 +291,8 @@ struct LayoutEditorView: View {
                 layout: layout,
                 style: .forSurface(
                     surface, albumColor: PlayerSnapshot.sample.avgColor,
-                    tinted: surface == .desktop, scale: layout.geometry.contentScale),
+                    tinted: surface == .desktop, scale: layout.geometry.contentScale,
+                    sliderColor: sliderColour, accentColor: accentColour),
                 hovering: hoverPreview,
                 snapshot: .sample
             )
@@ -552,6 +557,16 @@ struct LayoutEditorView: View {
                                 : "Higher numbers are removed first as the surface shrinks."
                         )
                         .font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    // Per-element controls, the same shape as the artwork
+                    // style block below. The bar count was reachable only from
+                    // the Player pane, nowhere near the element it draws.
+                    if layout.placements[index].element == .visualizer {
+                        Divider()
+                        Stepper(
+                            "Bars: \(visualizerBars)", value: $visualizerBars, in: 1...16)
+                        Toggle("Colour from the album", isOn: $colouredBars)
                     }
 
                     if layout.placements[index].element == .artwork {
