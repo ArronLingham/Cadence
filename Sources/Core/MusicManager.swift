@@ -1169,7 +1169,18 @@ class MusicManager: ObservableObject {
             debounceIdleTask?.cancel()
         } else {
             debounceIdleTask?.cancel()
-            debounceIdleTask = Task { [weak self] in
+            // `@MainActor` is load-bearing, not decoration. `MusicManager` is
+            // not an actor, so a bare `Task {}` here runs on the cooperative
+            // pool and mutated `isPlayerIdle` — a `@Published` — off the main
+            // thread. Combine takes its publisher lock to send, then SwiftUI's
+            // subscriber tries to sync onto main to invalidate the attribute;
+            // if main is inside its own publish at that moment it is already
+            // waiting for that same lock, and the two deadlock. It hung the app
+            // solid: pid 12011, all 2547 samples parked in
+            // `_os_unfair_lock_lock_slow`, unkillable from Force Quit because
+            // a menu-bar agent is not listed there. See
+            // `hang-sample-2026-09-07.txt`.
+            debounceIdleTask = Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 try? await Task.sleep(for: .seconds(Defaults[.waitInterval]))
                 withAnimation {
