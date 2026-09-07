@@ -58,7 +58,12 @@ public enum PlayerWindowLevel: String, Codable, CaseIterable, Defaults.Serializa
 /// be wrong are called out where they are.
 final class PlayerPanel: NSPanel {
     /// How close to an edge counts as grabbing it.
-    private static let resizeMargin: CGFloat = 6
+    ///
+    /// Was 6, which is thinner than the card's own transparent padding, so the
+    /// visible edge of the card sat OUTSIDE the grab band and every attempt to
+    /// resize landed on background instead. 10 is still narrow enough not to
+    /// steal clicks from an element sitting near the border.
+    private static let resizeMargin: CGFloat = 10
     /// Never let the user shrink it into a dot they cannot find again.
     private static let minimumWidth: CGFloat = 140
     private static let minimumHeight: CGFloat = 80
@@ -70,7 +75,11 @@ final class PlayerPanel: NSPanel {
 
     var onResize: ((CGSize) -> Void)?
     var onHoverChange: ((Bool) -> Void)?
-    var onSendToBack: (() -> Void)?
+    /// Double-click on dead space. Sends to the back, or brings it forward
+    /// again when it is already there — one gesture, both directions, because a
+    /// send-to-back you cannot undo reads as the widget having vanished.
+    var onToggleFront: (() -> Void)?
+    var onDragEnded: (() -> Void)?
     /// Asked whether the point (in view coordinates, top-left origin) is dead
     /// space. Only dead space responds to a double-click.
     var isDeadSpace: ((CGPoint) -> Bool)?
@@ -80,8 +89,17 @@ final class PlayerPanel: NSPanel {
     private var resizeEdge: Edge?
     private var trackingArea: NSTrackingArea?
 
+    /// Set when a press lands on dead space, which is the only thing that may
+    /// drag the window. See `isMovableByWindowBackground` in `init`.
+    private var dragOrigin: NSPoint?
+    private var dragStartFrame: NSRect?
+
+    /// All eight handles. The first version had five — no top edge at all, and
+    /// corners only at the bottom — so "grab any corner" was true of two of the
+    /// four, and the top edge silently did nothing.
     private enum Edge {
-        case left, right, bottom, bottomLeft, bottomRight
+        case left, right, top, bottom
+        case topLeft, topRight, bottomLeft, bottomRight
     }
 
     init(contentView: NSView, size: NSSize) {
@@ -98,11 +116,18 @@ final class PlayerPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        isMovableByWindowBackground = true
+        // OFF, deliberately. When this is true AppKit arms a window-level drag
+        // on mouse-down anywhere over the hosting view, before any SwiftUI
+        // gesture gets a say, and then swallows every subsequent drag event.
+        // That is why dragging the progress bar moved the whole card instead of
+        // seeking. Dragging is hand-rolled in `sendEvent` below and gated on the
+        // same `isDeadSpace` predicate the double-click already uses, so there
+        // is one hit-testing rule with two consumers rather than two rules.
+        isMovableByWindowBackground = false
         hidesOnDeactivate = false
         isFloatingPanel = false
         animationBehavior = .none
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        applySpaceBehaviour()
         acceptsMouseMovedEvents = true
         installTrackingArea()
     }
@@ -110,6 +135,20 @@ final class PlayerPanel: NSPanel {
     /// Taking key focus would deactivate whatever app the user is in, and macOS
     /// would hand focus back to *that* app on dismissal — fighting the thing a
     /// desktop widget is for.
+    /// `.canJoinAllSpaces` makes the card follow you to every desktop;
+    /// `.moveToActiveSpace` would drag it to whichever space you switch to,
+    /// which is the same annoyance in a different coat. Neither, plus
+    /// `.stationary`, leaves it on the desktop it was placed on.
+    func applySpaceBehaviour() {
+        var behaviour: NSWindow.CollectionBehavior = [.fullScreenAuxiliary, .ignoresCycle]
+        if Defaults[.playerFollowsSpaces] {
+            behaviour.insert(.canJoinAllSpaces)
+        } else {
+            behaviour.insert(.stationary)
+        }
+        collectionBehavior = behaviour
+    }
+
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
@@ -158,12 +197,16 @@ final class PlayerPanel: NSPanel {
         let nearLeft = point.x <= m
         let nearRight = point.x >= bounds.width - m
         let nearBottom = point.y <= m
-        switch (nearLeft, nearRight, nearBottom) {
-        case (true, _, true): return .bottomLeft
-        case (_, true, true): return .bottomRight
-        case (true, _, false): return .left
-        case (_, true, false): return .right
-        case (false, false, true): return .bottom
+        let nearTop = point.y >= bounds.height - m
+        switch (nearLeft, nearRight, nearTop, nearBottom) {
+        case (true, _, true, _): return .topLeft
+        case (_, true, true, _): return .topRight
+        case (true, _, _, true): return .bottomLeft
+        case (_, true, _, true): return .bottomRight
+        case (true, _, _, _): return .left
+        case (_, true, _, _): return .right
+        case (_, _, true, _): return .top
+        case (_, _, _, true): return .bottom
         default: return nil
         }
     }
@@ -171,10 +214,10 @@ final class PlayerPanel: NSPanel {
     private func cursor(for edge: Edge?) -> NSCursor {
         switch edge {
         case .left, .right: return .resizeLeftRight
-        case .bottom: return .resizeUpDown
+        case .top, .bottom: return .resizeUpDown
         // AppKit ships no diagonal resize cursor publicly. Left-right is the
         // honest approximation, since width is what drives this layout.
-        case .bottomLeft, .bottomRight: return .resizeLeftRight
+        case .topLeft, .topRight, .bottomLeft, .bottomRight: return .resizeLeftRight
         case nil: return .arrow
         }
     }
@@ -208,12 +251,22 @@ final class PlayerPanel: NSPanel {
             // Double-click on dead space sends the player to the back.
             // Interactive elements are excluded via `isDeadSpace`, so
             // double-clicking the scrubber does not make the widget vanish.
-            if event.clickCount == 2, let bounds = contentView?.bounds {
+            if let bounds = contentView?.bounds {
                 let flipped = CGPoint(
                     x: event.locationInWindow.x, y: bounds.height - event.locationInWindow.y)
-                if isDeadSpace?(flipped) ?? false {
-                    onSendToBack?()
+                let dead = isDeadSpace?(flipped) ?? false
+                if event.clickCount == 2, dead {
+                    onToggleFront?()
                     return  // claimed
+                }
+                // Arm a window drag ONLY on dead space, so a press that lands on
+                // the scrubber (or any element the metrics call interactive)
+                // reaches SwiftUI with its drag intact. Deliberately does NOT
+                // return: the down still has to flow on, or the context menu and
+                // the close button's popover never open.
+                if dead {
+                    dragOrigin = NSEvent.mouseLocation
+                    dragStartFrame = frame
                 }
             }
 
@@ -222,8 +275,24 @@ final class PlayerPanel: NSPanel {
                 performResize()
                 return  // claimed
             }
+            if let origin = dragOrigin, let start = dragStartFrame {
+                let here = NSEvent.mouseLocation
+                setFrameOrigin(
+                    NSPoint(
+                        x: start.origin.x + here.x - origin.x,
+                        y: start.origin.y + here.y - origin.y))
+                return  // claimed
+            }
 
         case .leftMouseUp:
+            if dragOrigin != nil {
+                dragOrigin = nil
+                dragStartFrame = nil
+                // AppKit is no longer moving the window, so the autosave never
+                // fires on its own any more. Persist explicitly or the card
+                // forgets where it was left.
+                onDragEnded?()
+            }
             if isResizing {
                 isResizing = false
                 resizeEdge = nil
@@ -266,6 +335,10 @@ final class PlayerPanel: NSPanel {
             x = start.origin.x + dx
         case .bottom:
             height = start.height - dy
+        // The top edge grows the card upward: y grows up in Cocoa, so dragging
+        // up is +dy and must ADD height, the opposite sign to the bottom edge.
+        case .top:
+            height = start.height + dy
         case .bottomRight:
             width = start.width + dx
             height = start.height - dy
@@ -273,6 +346,13 @@ final class PlayerPanel: NSPanel {
             width = start.width - dx
             x = start.origin.x + dx
             height = start.height - dy
+        case .topRight:
+            width = start.width + dx
+            height = start.height + dy
+        case .topLeft:
+            width = start.width - dx
+            x = start.origin.x + dx
+            height = start.height + dy
         }
         width = max(Self.minimumWidth, width)
         height = max(Self.minimumHeight, height)

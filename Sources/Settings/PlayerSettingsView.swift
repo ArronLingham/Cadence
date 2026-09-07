@@ -30,6 +30,7 @@ struct PlayerSettingsView: View {
     @Default(.playerTintsWithAlbum) private var tinted
     @Default(.playerBackgroundOpacity) private var opacity
     @Default(.hoverGrowsWidget) private var hoverGrows
+    @Default(.playerFollowsSpaces) private var followsSpaces
     @Default(.enableLockScreenWidget) private var lockEnabled
     @Default(.lockWidgetWidth) private var lockWidth
     @Default(.lockFullBackground) private var lockBackground
@@ -87,6 +88,9 @@ struct PlayerSettingsView: View {
                     Slider(value: $opacity, in: 0...1)
                     Text("\(Int(opacity * 100))%").monospacedDigit().frame(width: 42)
                 }
+                Toggle("Follow me between desktops", isOn: $followsSpaces)
+                Text("Off: the player stays on the desktop you put it on. On: it appears on all of them.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Grow on hover", isOn: $hoverGrows)
                 Text("When off, anything you mark as hover-only has to fit in the size it already is.")
                     .font(.caption).foregroundStyle(.secondary)

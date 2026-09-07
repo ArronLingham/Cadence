@@ -49,6 +49,17 @@ final class PlayerWindowManager: ObservableObject {
         Defaults.publisher(.playerWindowLevel, options: [])
             .sink { [weak self] _ in Task { @MainActor in self?.applyLevel() } }
             .store(in: &cancellables)
+        Defaults.publisher(.playerFollowsSpaces, options: [])
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.panel?.applySpaceBehaviour() }
+            }
+            .store(in: &cancellables)
+        // The budget is written by the resize drag and cleared by Reset in the
+        // editor, which is a different window — without this the card keeps the
+        // old height until something else happens to relayout it.
+        Defaults.publisher(.playerHeightBudget, options: [])
+            .sink { [weak self] _ in Task { @MainActor in self?.relayout(animated: true) } }
+            .store(in: &cancellables)
         Defaults.publisher(.playerLayouts, options: [])
             .sink { [weak self] _ in
                 Task { @MainActor in
@@ -104,8 +115,17 @@ final class PlayerWindowManager: ObservableObject {
         created.onHoverChange = { [weak self] hovering in
             MainActor.assumeIsolated { self?.setHovering(hovering) }
         }
-        created.onSendToBack = {
-            MainActor.assumeIsolated { Defaults[.playerWindowLevel] = .desktop }
+        // One gesture, both directions. Sending to the back used to be a
+        // one-way trip: the card was behind everything and double-clicking it
+        // again did nothing, which reads as the widget having disappeared.
+        created.onToggleFront = {
+            MainActor.assumeIsolated {
+                Defaults[.playerWindowLevel] =
+                    Defaults[.playerWindowLevel] == .desktop ? .normal : .desktop
+            }
+        }
+        created.onDragEnded = { [weak self] in
+            MainActor.assumeIsolated { self?.persistFrame() }
         }
         created.isDeadSpace = { [weak self] point in
             MainActor.assumeIsolated { self?.isDeadSpace(at: point) ?? true }
@@ -144,16 +164,21 @@ final class PlayerWindowManager: ObservableObject {
 
     /// The height the window should be.
     ///
-    /// When the user has dragged the bottom edge, that is a *budget* and the
-    /// solver drops elements to fit it. Otherwise it is whatever the layout
-    /// needs, so there is never an empty strip at the bottom — the mistake
-    /// `VinylWidgetSize.height` was written to correct.
+    /// When the user has dragged a vertical edge, that is a *budget*.
+    ///
+    /// Below the intrinsic height the solver drops elements to fit it. ABOVE it
+    /// the window simply gets taller and the content centres in the extra room:
+    /// the budget used to be clamped with `min(intrinsic, budget)`, so dragging
+    /// to make the card taller was silently ignored and twenty drag steps gave
+    /// twenty identical heights. Growing leaves an empty band by definition,
+    /// which is what the user asked for and is not the `VinylWidgetSize.height`
+    /// mistake — that was an empty strip nobody chose.
     private func targetHeight(hovering: Bool) -> CGFloat {
         let intrinsic = GridSolver.intrinsicHeight(
             layout: layout, width: width, hovering: hovering)
         let budget = Defaults[.playerHeightBudget]
         guard budget > 0 else { return intrinsic }
-        return min(intrinsic, budget)
+        return budget
     }
 
     private func applyUserSize(_ proposed: CGSize) {
@@ -171,9 +196,20 @@ final class PlayerWindowManager: ObservableObject {
     private func relayout(animated: Bool) {
         guard let panel else { return }
         let height = targetHeight(hovering: isHovering)
-        let target = NSRect(
-            x: panel.frame.minX, y: panel.frame.maxY - height,
-            width: width, height: height)
+        // Anchored at the TOP edge: a widget that grows downward stays put where
+        // the user left it. But at the bottom of a display there is nothing to
+        // grow INTO, so the top anchor pushes the card off the edge and
+        // `clampOnScreen` then yanks the whole thing upward — the card jumps
+        // under the pointer, which is what "hover doesn't work well near the
+        // bottom" is. When there is no room below, anchor the BOTTOM instead
+        // and let it grow up.
+        var originY = panel.frame.maxY - height
+        if let visible = (panel.screen ?? NSScreen.main)?.visibleFrame,
+            originY < visible.minY
+        {
+            originY = min(panel.frame.minY, visible.maxY - height)
+        }
+        let target = NSRect(x: panel.frame.minX, y: originY, width: width, height: height)
         // Anchored at the TOP edge: a widget that grows downward stays put where
         // the user left it, whereas growing from the bottom-left origin makes
         // the whole card jump up the screen on hover.
@@ -297,7 +333,12 @@ private struct PlayerRootView: View {
     /// close button set the window level to desktop with no indication that is
     /// what it had done, so it read as a broken quit.
     @ViewBuilder private var closeButton: some View {
-        if manager.isHovering {
+        // Stays mounted while its own popover is open. It used to be gated on
+        // hover alone, so moving the pointer off the glyph towards the popover
+        // unmounted the button — and a popover dies with the view it is
+        // attached to. The menu appeared correctly and then vanished the moment
+        // you tried to reach it.
+        if manager.isHovering || showingCloseChoice {
             Button {
                 showingCloseChoice = true
             } label: {

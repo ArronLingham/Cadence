@@ -65,6 +65,14 @@ extension Defaults.Keys {
     /// simply has to fit in the resting frame.
     static let hoverGrowsWidget = Key<Bool>("hoverGrowsWidget", default: true)
 
+    /// Whether the desktop player follows you between Spaces.
+    ///
+    /// Off by default: the panel used to be unconditionally `.canJoinAllSpaces`,
+    /// so it appeared on every desktop whether or not that was wanted. macOS
+    /// has no per-window user-facing control for a borderless panel, so this is
+    /// the switch.
+    static let playerFollowsSpaces = Key<Bool>("playerFollowsSpaces", default: false)
+
     /// Show Cadence in the Dock and the ⌘Tab switcher.
     ///
     /// Off by default because a menu-bar music player that occupies a Dock slot

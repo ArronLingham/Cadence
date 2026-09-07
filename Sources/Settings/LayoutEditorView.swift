@@ -213,6 +213,13 @@ struct LayoutEditorView: View {
                 history.record(layout, for: surface)
                 layout = PlayerLayouts.defaults[surface]
                 selection = nil
+                // The height budget is part of "how this surface currently
+                // looks" even though it is not part of the layout. Resetting
+                // without clearing it restored every placement and then let the
+                // solver drop the bottom ones straight back out again, so Reset
+                // looked like it had not worked — the reported "reset doesn't
+                // fix the things missing at the bottom".
+                if surface == .desktop { Defaults[.playerHeightBudget] = 0 }
             }
             .help("Restore this surface to the layout Cadence ships with.")
         }

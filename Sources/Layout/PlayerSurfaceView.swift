@@ -157,6 +157,10 @@ struct PlayerElementView: View {
     var isLive: Bool = true
 
     @State private var showingRemaining = false
+    /// Non-nil only while the scrubber is being dragged. The bar follows the
+    /// pointer from this, because `data.position` keeps advancing from the
+    /// controller's last report and would fight the drag.
+    @State private var scrubFraction: CGFloat?
 
     var body: some View {
         switch placement.element {
@@ -314,7 +318,18 @@ struct PlayerElementView: View {
             }
             .offset(y: pivot * 0.45)
             .rotationEffect(.degrees(data.isPlaying ? 32 : 12), anchor: .top)
-            .animation(.spring(response: 0.75, dampingFraction: 0.82), value: data.isPlaying)
+            // Asymmetric on purpose. The record does not coast to a halt —
+            // `VinylRecordView.stopSpin()` removes the CABasicAnimation and
+            // writes the frozen angle in the same turn — so a 0.75s spring
+            // lifting the arm read as the arm reacting late to a stop that had
+            // already happened. Lifting is quick and barely bouncy; cueing back
+            // down keeps the slower settle, which is how a real arm behaves and
+            // is the direction where the delay looks deliberate.
+            .animation(
+                data.isPlaying
+                    ? .spring(response: 0.55, dampingFraction: 0.78)
+                    : .spring(response: 0.22, dampingFraction: 0.9),
+                value: data.isPlaying)
         }
         .frame(width: pivot, alignment: .top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -369,15 +384,35 @@ struct PlayerElementView: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(style.ink.opacity(0.22))
                     Capsule().fill(style.ink.opacity(0.85))
-                        .frame(width: geo.size.width * fraction(at: context.date))
+                        .frame(
+                            width: geo.size.width
+                                * (scrubFraction ?? fraction(at: context.date)))
                 }
                 .frame(height: 3)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
-                .onTapGesture { point in
-                    guard data.duration > 0, data.duration.isFinite else { return }
-                    actions.seekTo(data.duration * (point.x / max(1, geo.size.width)))
-                }
+                // `minimumDistance: 0` fires `onChanged` on the initial press,
+                // so this subsumes tap-to-seek — a separate `onTapGesture`
+                // alongside it would compete for the same events and make both
+                // unreliable. Dragging never reached SwiftUI at all before,
+                // because the panel had `isMovableByWindowBackground` on and
+                // AppKit claimed the whole card as drag background.
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard data.duration > 0, data.duration.isFinite else { return }
+                            scrubFraction = min(
+                                max(value.location.x / max(1, geo.size.width), 0), 1)
+                        }
+                        .onEnded { value in
+                            defer { scrubFraction = nil }
+                            guard data.duration > 0, data.duration.isFinite else { return }
+                            let f = min(max(value.location.x / max(1, geo.size.width), 0), 1)
+                            // Committed once, on release. `MusicManager.seek`
+                            // spawns a Task per call, so seeking per mouse-move
+                            // would be a controller round trip every frame.
+                            actions.seekTo(data.duration * f)
+                        })
             }
         }
     }
