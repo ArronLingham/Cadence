@@ -605,6 +605,16 @@ class MusicManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // The extraction mode changes how `prominentOpposingColors` reads the
+        // artwork, but the colour is only computed when the ARTWORK changes —
+        // so flipping Average/Most vibrant did nothing visible until the next
+        // track, which reads as the two settings being identical. Recompute in
+        // place instead.
+        Defaults.publisher(.colorExtractionMode)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.calculateAverageColor() }
+            .store(in: &cancellables)
+
         // Observe Pear Desktop launch/terminate for auto-detection
         setupPearDesktopAutoDetection()
 
@@ -1169,7 +1179,18 @@ class MusicManager: ObservableObject {
             debounceIdleTask?.cancel()
         } else {
             debounceIdleTask?.cancel()
-            debounceIdleTask = Task { [weak self] in
+            // `@MainActor` is load-bearing, not decoration. `MusicManager` is
+            // not an actor, so a bare `Task {}` here runs on the cooperative
+            // pool and mutated `isPlayerIdle` — a `@Published` — off the main
+            // thread. Combine takes its publisher lock to send, then SwiftUI's
+            // subscriber tries to sync onto main to invalidate the attribute;
+            // if main is inside its own publish at that moment it is already
+            // waiting for that same lock, and the two deadlock. It hung the app
+            // solid: pid 12011, all 2547 samples parked in
+            // `_os_unfair_lock_lock_slow`, unkillable from Force Quit because
+            // a menu-bar agent is not listed there. See
+            // `hang-sample-2026-09-07.txt`.
+            debounceIdleTask = Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 try? await Task.sleep(for: .seconds(Defaults[.waitInterval]))
                 withAnimation {
@@ -1186,9 +1207,14 @@ class MusicManager: ObservableObject {
         workItem = DispatchWorkItem { [weak self] in
             withAnimation(.smooth) {
                 self?.albumArt = newAlbumArt
-                if Defaults[.coloredSpectrogram] {
-                    self?.calculateAverageColor()
-                }
+                // Unconditional. `coloredSpectrogram` used to gate this, but
+                // that key is labelled "colour the visualiser from the album"
+                // and gating extraction here starved everything ELSE that needs
+                // the colour — the card tint, "Match album art" on the progress
+                // bar, the lock-screen background. Turning a visualiser option
+                // off is not consent to stop knowing what colour the album is.
+                // The visualiser reads the key itself, where it belongs.
+                self?.calculateAverageColor()
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem!)

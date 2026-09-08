@@ -18,6 +18,7 @@
 
 import AppKit
 import CoreAudio
+import Defaults
 import SwiftUI
 
 // The four elements that used to draw an icon and do nothing.
@@ -104,6 +105,40 @@ struct AirPlayElement: View {
 }
 
 /// System output volume.
+/// The volume of the music app itself, over AppleScript.
+///
+/// Spotify, Music and Amazon Music all expose `sound volume` as 0-100. Sources
+/// with no scriptable volume (Now Playing, YouTube Music) have no app volume to
+/// set, so the element falls back to the system slider rather than pretending.
+enum AppVolume {
+    static func scriptTarget(for controller: MediaControllerType) -> String? {
+        switch controller {
+        case .appleMusic: return "Music"
+        case .spotify: return "Spotify"
+        case .amazonMusic: return "Amazon Music"
+        default: return nil
+        }
+    }
+
+    static func current(_ app: String) async -> Float? {
+        guard
+            let descriptor = try? await AppleScriptHelper.execute(
+                "tell application \"\(app)\" to get sound volume")
+        else { return nil }
+        let value = descriptor.int32Value
+        guard value >= 0, value <= 100 else { return nil }
+        return Float(value) / 100
+    }
+
+    static func set(_ value: Float, app: String) {
+        let level = Int((min(max(value, 0), 1) * 100).rounded())
+        Task.detached(priority: .utility) {
+            try? await AppleScriptHelper.executeVoid(
+                "tell application \"\(app)\" to set sound volume to \(level)")
+        }
+    }
+}
+
 struct VolumeElement: View {
     let style: SurfaceStyle
     var isLive: Bool = true
@@ -112,6 +147,14 @@ struct VolumeElement: View {
     // round-trips per render and discarded all but the first. Read in
     // `onAppear` instead, where it happens once.
     @State private var volume: Float = 0
+    @Default(.volumeControlsApp) private var controlsApp
+    @Default(.mediaController) private var source
+
+    /// nil when the slider should drive the system instead — either the user
+    /// asked for system volume, or the current source has no scriptable one.
+    private var appTarget: String? {
+        controlsApp ? AppVolume.scriptTarget(for: source) : nil
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -123,7 +166,11 @@ struct VolumeElement: View {
                     get: { volume },
                     set: {
                         volume = $0
-                        SystemVolume.set($0)
+                        if let app = appTarget {
+                            AppVolume.set($0, app: app)
+                        } else {
+                            SystemVolume.set($0)
+                        }
                     }), in: 0...1
             )
             .controlSize(.mini)
@@ -133,7 +180,20 @@ struct VolumeElement: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Read on appear, not polled. The slider is the source of truth while
         // the user is dragging it, and a poll would fight them for the handle.
-        .onAppear { if isLive { volume = SystemVolume.current() } else { volume = 0.6 } }
+        .onAppear {
+            guard isLive else {
+                volume = 0.6
+                return
+            }
+            if let app = appTarget {
+                // AppleScript is a round trip, so seed from the system value and
+                // correct it when the app answers rather than blocking a render.
+                volume = SystemVolume.current()
+                Task { if let level = await AppVolume.current(app) { volume = level } }
+            } else {
+                volume = SystemVolume.current()
+            }
+        }
     }
 }
 

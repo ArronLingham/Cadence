@@ -214,6 +214,8 @@ private struct LockScreenRootView: View {
 
     @Default(.playerLayouts) private var layouts
     @Default(.lockFullBackground) private var background
+    @Default(.sliderColor) private var sliderColour
+    @Default(.accentColor) private var accentColour
 
     var body: some View {
         if manager.isImmersive {
@@ -223,39 +225,24 @@ private struct LockScreenRootView: View {
         }
     }
 
-    /// How much of the widget's leading edge is artwork.
-    ///
-    /// Derived from the layout rather than guessed, so it stays right when the
-    /// user moves the artwork or changes its span.
-    private var artworkHitWidth: CGFloat {
-        let layout = layouts.lockWidget
-        guard let art = layout.placements.first(where: { $0.element == .artwork }) else { return 0 }
-        let width = Defaults[.lockWidgetWidth]
-        let cell = GridSolver.cellWidth(for: layout.geometry, totalWidth: width)
-        return layout.geometry.padding
-            + GridSolver.resolvedWidth(
-                span: art.colSpan, cellWidth: cell, gutter: layout.geometry.gutter)
-    }
-
     // MARK: Small widget
 
     private var widget: some View {
         PlayerSurfaceView(
             layout: layouts.lockWidget,
             style: .forSurface(.lockWidget, albumColor: music.avgColor, tinted: false,
-                               scale: layouts.lockWidget.geometry.contentScale)
+                               scale: layouts.lockWidget.geometry.contentScale,
+                               sliderColor: sliderColour, accentColor: accentColour),
+            // A SINGLE click on the artwork, and on the artwork ELEMENT rather
+            // than a transparent strip guessed to be the same width. The strip
+            // was a full-height column on the leading edge, so it covered
+            // whatever the user had actually placed there; routing through the
+            // renderer means the target is wherever the artwork really is, at
+            // whatever span, on whatever row.
+            onExpand: { manager.setImmersive(true) }
         )
         .background(glass)
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        // Only the artwork expands, which is what this always claimed and did
-        // not do: the gesture was on the whole widget, so double-clicking a
-        // transport button threw you into a full-screen overlay.
-        .overlay(alignment: .leading) {
-            Color.clear
-                .frame(width: artworkHitWidth)
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { manager.setImmersive(true) }
-        }
     }
 
     /// Liquid glass where the OS has it, a frosted material where it does not.
@@ -281,7 +268,8 @@ private struct LockScreenRootView: View {
             PlayerSurfaceView(
                 layout: layouts.lockFull,
                 style: .forSurface(.lockFull, albumColor: music.avgColor, tinted: false,
-                                   scale: layouts.lockFull.geometry.contentScale))
+                                   scale: layouts.lockFull.geometry.contentScale,
+                                   sliderColor: sliderColour, accentColor: accentColour))
         }
         .ignoresSafeArea()
         // Deliberately a SINGLE tap, plus Escape (see `LockPanel`), plus the

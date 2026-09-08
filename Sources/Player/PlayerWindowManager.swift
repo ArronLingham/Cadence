@@ -49,6 +49,36 @@ final class PlayerWindowManager: ObservableObject {
         Defaults.publisher(.playerWindowLevel, options: [])
             .sink { [weak self] _ in Task { @MainActor in self?.applyLevel() } }
             .store(in: &cancellables)
+        Defaults.publisher(.showInDock, options: [])
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.panel?.applySpaceBehaviour()
+                    self?.panel?.title = "Cadence Player"
+                }
+            }
+            .store(in: &cancellables)
+        Defaults.publisher(.playerFollowsSpaces, options: [])
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.panel?.applySpaceBehaviour() }
+            }
+            .store(in: &cancellables)
+        // The budget is written by Reset in the editor, which is a different
+        // window — without this the card keeps the old height until something
+        // else happens to relayout it.
+        //
+        // Skipped while resizing, and that guard is load-bearing rather than
+        // defensive: `applyUserSize` writes this key on EVERY step of a resize
+        // drag, so without it each step did two relayouts instead of one, the
+        // second of them animated — an animation started sixty times a second
+        // that also fights the pointer it is chasing.
+        Defaults.publisher(.playerHeightBudget, options: [])
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, !(self.panel?.isResizing ?? false) else { return }
+                    self.relayout(animated: true)
+                }
+            }
+            .store(in: &cancellables)
         Defaults.publisher(.playerLayouts, options: [])
             .sink { [weak self] _ in
                 Task { @MainActor in
@@ -104,13 +134,25 @@ final class PlayerWindowManager: ObservableObject {
         created.onHoverChange = { [weak self] hovering in
             MainActor.assumeIsolated { self?.setHovering(hovering) }
         }
-        created.onSendToBack = {
-            MainActor.assumeIsolated { Defaults[.playerWindowLevel] = .desktop }
+        // One gesture, both directions. Sending to the back used to be a
+        // one-way trip: the card was behind everything and double-clicking it
+        // again did nothing, which reads as the widget having disappeared.
+        created.onToggleFront = {
+            MainActor.assumeIsolated {
+                Defaults[.playerWindowLevel] =
+                    Defaults[.playerWindowLevel] == .desktop ? .normal : .desktop
+            }
+        }
+        created.onDragEnded = { [weak self] in
+            MainActor.assumeIsolated { self?.persistFrame() }
         }
         created.isDeadSpace = { [weak self] point in
             MainActor.assumeIsolated { self?.isDeadSpace(at: point) ?? true }
         }
 
+        // Named so it reads as "Cadence Player" in the Window menu rather than
+        // as an untitled window, once a Dock icon makes that menu visible.
+        created.title = "Cadence Player"
         created.setFrameAutosaveName("CadencePlayer")
         if created.frame.origin == .zero { created.setFrameOrigin(defaultOrigin(for: size)) }
         panel = created
@@ -144,16 +186,21 @@ final class PlayerWindowManager: ObservableObject {
 
     /// The height the window should be.
     ///
-    /// When the user has dragged the bottom edge, that is a *budget* and the
-    /// solver drops elements to fit it. Otherwise it is whatever the layout
-    /// needs, so there is never an empty strip at the bottom — the mistake
-    /// `VinylWidgetSize.height` was written to correct.
+    /// When the user has dragged a vertical edge, that is a *budget*.
+    ///
+    /// Below the intrinsic height the solver drops elements to fit it. ABOVE it
+    /// the window simply gets taller and the content centres in the extra room:
+    /// the budget used to be clamped with `min(intrinsic, budget)`, so dragging
+    /// to make the card taller was silently ignored and twenty drag steps gave
+    /// twenty identical heights. Growing leaves an empty band by definition,
+    /// which is what the user asked for and is not the `VinylWidgetSize.height`
+    /// mistake — that was an empty strip nobody chose.
     private func targetHeight(hovering: Bool) -> CGFloat {
         let intrinsic = GridSolver.intrinsicHeight(
             layout: layout, width: width, hovering: hovering)
         let budget = Defaults[.playerHeightBudget]
         guard budget > 0 else { return intrinsic }
-        return min(intrinsic, budget)
+        return budget
     }
 
     private func applyUserSize(_ proposed: CGSize) {
@@ -171,9 +218,20 @@ final class PlayerWindowManager: ObservableObject {
     private func relayout(animated: Bool) {
         guard let panel else { return }
         let height = targetHeight(hovering: isHovering)
-        let target = NSRect(
-            x: panel.frame.minX, y: panel.frame.maxY - height,
-            width: width, height: height)
+        // Anchored at the TOP edge: a widget that grows downward stays put where
+        // the user left it. But at the bottom of a display there is nothing to
+        // grow INTO, so the top anchor pushes the card off the edge and
+        // `clampOnScreen` then yanks the whole thing upward — the card jumps
+        // under the pointer, which is what "hover doesn't work well near the
+        // bottom" is. When there is no room below, anchor the BOTTOM instead
+        // and let it grow up.
+        var originY = panel.frame.maxY - height
+        if let visible = (panel.screen ?? NSScreen.main)?.visibleFrame,
+            originY < visible.minY
+        {
+            originY = min(panel.frame.minY, visible.maxY - height)
+        }
+        let target = NSRect(x: panel.frame.minX, y: originY, width: width, height: height)
         // Anchored at the TOP edge: a widget that grows downward stays put where
         // the user left it, whereas growing from the bottom-left origin makes
         // the whole card jump up the screen on hover.
@@ -226,6 +284,11 @@ final class PlayerWindowManager: ObservableObject {
 
     private func applyLevel() { panel?.level = Defaults[.playerWindowLevel].windowLevel }
 
+    /// The display the card is currently on. `NSScreen.main` is "the screen
+    /// with the key window", and this panel deliberately cannot become key, so
+    /// it is the wrong answer here.
+    var currentScreen: NSScreen? { panel?.screen }
+
     private func defaultOrigin(for size: NSSize) -> NSPoint {
         guard let visible = NSScreen.main?.visibleFrame else { return .zero }
         return NSPoint(x: visible.maxX - size.width - 40, y: visible.minY + 40)
@@ -260,6 +323,9 @@ private struct PlayerRootView: View {
     @Default(.playerLayouts) private var layouts
     @Default(.playerTintsWithAlbum) private var tinted
     @Default(.playerBackgroundOpacity) private var backgroundOpacity
+    @Default(.sliderColor) private var sliderColour
+    @Default(.playerUsesGlass) private var usesGlass
+    @Default(.accentColor) private var accentColour
 
     @State private var showingCloseChoice = false
 
@@ -268,8 +334,10 @@ private struct PlayerRootView: View {
             layout: layouts.desktop,
             style: .forSurface(
                 .desktop, albumColor: music.avgColor, tinted: tinted && music.hasTrack,
-                scale: layouts.desktop.geometry.contentScale),
-            hovering: manager.isHovering
+                scale: layouts.desktop.geometry.contentScale,
+                sliderColor: sliderColour, accentColor: accentColour),
+            hovering: manager.isHovering,
+            onExpand: { DesktopFullScreenController.shared.toggle() }
         )
         .background(card)
         .overlay(alignment: .topTrailing) { closeButton }
@@ -277,12 +345,25 @@ private struct PlayerRootView: View {
         .animation(.easeInOut(duration: 0.35), value: music.avgColor)
     }
 
-    private var card: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(cardColor.opacity(backgroundOpacity))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+    @ViewBuilder private var card: some View {
+        // Liquid glass is the same public `glassEffect` the lock screen uses —
+        // the API the macOS 26 floor was chosen for — which had exactly one
+        // caller and was unreachable from the surface people actually look at.
+        // The tint still applies over the top, at a low opacity, so an album
+        // still colours the card without turning the glass into a flat fill.
+        if usesGlass, #available(macOS 26.0, *) {
+            Color.clear
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(cardColor.opacity(backgroundOpacity * 0.35)))
+        } else {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(cardColor.opacity(backgroundOpacity))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        }
     }
 
     private var cardColor: Color {
@@ -297,7 +378,12 @@ private struct PlayerRootView: View {
     /// close button set the window level to desktop with no indication that is
     /// what it had done, so it read as a broken quit.
     @ViewBuilder private var closeButton: some View {
-        if manager.isHovering {
+        // Stays mounted while its own popover is open. It used to be gated on
+        // hover alone, so moving the pointer off the glyph towards the popover
+        // unmounted the button — and a popover dies with the view it is
+        // attached to. The menu appeared correctly and then vanished the moment
+        // you tried to reach it.
+        if manager.isHovering || showingCloseChoice {
             Button {
                 showingCloseChoice = true
             } label: {

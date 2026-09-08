@@ -44,6 +44,7 @@ extension PlayerLayouts {
         desktop: .defaultDesktop,
         lockWidget: .defaultLockWidget,
         lockFull: .defaultLockFull,
+        desktopFull: .defaultLockFull,
         launcher: .defaultLauncher)
 }
 
@@ -176,7 +177,11 @@ extension SurfaceLayout {
     /// states are separate behaviours, not layouts, and the immersive one is
     /// `lockFull` below.
     public static let defaultLockWidget = SurfaceLayout(
-        geometry: GridGeometry(columns: 6),
+        // centersContent, which this surface never set. The panel is a fixed
+        // width the user picks, so without it the arrangement sat hard against
+        // the leading edge with the slack all on one side — the reported
+        // "content isn't properly centred".
+        geometry: GridGeometry(columns: 6, centersContent: true),
         placements: [
             // albumArtButton(size: 60, cornerRadius: 16) — a 60x60 square, style
             // .cover. Needs ElementMetrics.rowSpan 2 so it flanks both title and
@@ -297,94 +302,70 @@ extension SurfaceLayout {
     /// surface centres it because nothing else occupies row 0.
     ///
     /// No progress bar or times: the source draws none.
+    /// Two halves, which is what the user asked for and what `rowSpan` was
+    /// added to express.
+    ///
+    /// LEFT  (cols 0-5):  artwork, then title, artist and the transport row
+    ///                    directly beneath it.
+    /// RIGHT (cols 6-11): lyrics, spanning all four rows.
+    ///
+    /// The previous version put artwork and lyrics side by side in row 0 and
+    /// then ran title, artist and transport across all twelve columns UNDER
+    /// both of them — so the lyrics column was one row tall with a full-width
+    /// text block cutting across beneath it. That is what "the lyrics look
+    /// really wonky" describes, and no arrangement of one-row elements could
+    /// fix it.
+    ///
+    /// The artwork is a COVER here, not a vinyl: this surface is a reading
+    /// view, and a spinning record next to scrolling lyrics is two things
+    /// competing for the eye.
     public static let defaultLockFull = SurfaceLayout(
         geometry: GridGeometry(columns: 12, contentScale: 1.6, centersContent: true),
         placements: [
-            // artwork(side:) with side = min(geo.height*0.62, hasLyrics ? width*0.42 :
-            // width*0.6). Drawn as a COVER, not a vinyl: Image(nsImage:
-            // albumArt).aspectRatio(.fill) clipped to a RoundedRectangle of radius
-            // side*0.045 — so ArtworkStyle.cover, showsStylus false, showsProgressRing
-            // false. Six columns encodes the with-lyrics case (0.42w of a 0.86w
-            // content box is ~49%). Two things the grid cannot express: (a) when
-            // hasLyrics is false the source both re-centres the artwork and grows it
-            // to width*0.6 — the solver only compacts empty ROWS, so dropping the
-            // lyrics placement leaves this left-aligned at col 0 rather than centred;
-            // (b) the 0.62*height cap, which ElementMetrics.height(resolvedWidth:) has
-            // no way to see.
+            // Square, so a 6-column span is also its height — it sets how tall
+            // the left half is, and rows 0-2 share that.
             ElementPlacement(
                 id: UUID(uuidString: "10cfd000-0000-4000-8000-000000000000")!,
-                element: .artwork, col: 0, row: 0, colSpan: 5,
-                layer: .base, visibility: .always, priority: 0, artworkStyle: .vinyl),
-            // SyncedLyricsList(currentSize: 34, otherSize: 25, lineSpacing: 22,
-            // fitted: true, fittedCapacity: 5, linesBefore: 1), .frame(maxWidth:
-            // .infinity).frame(height: artSide). Base, not overlay — it sits BESIDE
-            // the artwork in an HStack, it does not draw on it. Gated today on
-            // enableLyrics && !syncedLyrics.isEmpty, which in the grid means the user
-            // removes the placement. MISMATCH to flag: the grid's `lyrics` case is
-            // currently metriced as a 30pt interactive toggle button (.fixed(30,
-            // interactive: true)); on lockFull it is a five-line reading sheet with a
-            // natural height near 222pt that the source forces to equal artSide. It
-            // also matches the artwork's height for free here only because it shares
-            // row 0 with the artwork.
+                element: .artwork, col: 0, row: 0, colSpan: 6, rowSpan: 3,
+                layer: .base, visibility: .always, priority: 0,
+                artworkStyle: ArtworkStyle(
+                    kind: .cover, showsStylus: false, showsProgressRing: false)),
+            // Spans every row, so it is a genuine right-hand column rather than
+            // a single line stranded at the top.
             ElementPlacement(
-                id: UUID(uuidString: "10cfd000-0000-4000-8000-000000000001")!,
-                element: .lyrics, col: 5, row: 0, colSpan: 5,
+                id: UUID(uuidString: "10cfd001-0000-4000-8000-000000000000")!,
+                element: .lyrics, col: 6, row: 0, colSpan: 6, rowSpan: 5,
                 layer: .base, visibility: .always, priority: 2),
-            // Text(musicManager.songTitle), .system(size: 22, weight: .semibold),
-            // white, lineLimit(1), centred inside .frame(maxWidth: .infinity) with
-            // width*0.07 side padding. Spans all 12 because it is full-bleed and
-            // growsHorizontally. Grid metrics currently say 20pt; lockFull draws 22.
             ElementPlacement(
-                id: UUID(uuidString: "10cfd000-0000-4000-8000-000000000002")!,
-                element: .title, col: 0, row: 1, colSpan: 12,
+                id: UUID(uuidString: "10cfd002-0000-4000-8000-000000000000")!,
+                element: .title, col: 0, row: 3, colSpan: 6,
                 layer: .base, visibility: .always, priority: 1),
-            // Text(musicManager.artistName), .system(size: 16), white at 0.7 opacity,
-            // lineLimit(1), 4pt below the title in the inner VStack(spacing: 4). Grid
-            // metrics say 17pt; lockFull draws 16. First drop that actually frees a
-            // row of height.
             ElementPlacement(
-                id: UUID(uuidString: "10cfd000-0000-4000-8000-000000000003")!,
-                element: .artist, col: 0, row: 2, colSpan: 12,
+                id: UUID(uuidString: "10cfd003-0000-4000-8000-000000000000")!,
+                element: .artist, col: 0, row: 4, colSpan: 6,
                 layer: .base, visibility: .always, priority: 3),
-            // transportButton("backward.fill", size: 26) calling
-            // musicManager.previousTrack(). Icon 26pt medium, hit frame 26*1.8 =
-            // 46.8pt square. colSpan 2 rather than 1 so the three buttons centre on
-            // the 12-column midline and the extra cell width reproduces the
-            // HStack(spacing: 34).
+            // The progress bar sits under the text, still on the left half, so
+            // the two columns stay visually separate.
             ElementPlacement(
-                id: UUID(uuidString: "10cfd000-0000-4000-8000-000000000004")!,
-                element: .previous, col: 3, row: 3, colSpan: 2,
+                id: UUID(uuidString: "10cfd007-0000-4000-8000-000000000000")!,
+                element: .progressBar, col: 0, row: 5, colSpan: 6,
+                layer: .base, visibility: .always, priority: 2),
+            // Transport directly under the artwork and its text, centred in the
+            // left half: cols 1-5 of 0-5.
+            ElementPlacement(
+                id: UUID(uuidString: "10cfd004-0000-4000-8000-000000000000")!,
+                element: .previous, col: 1, row: 6, colSpan: 1,
                 layer: .base, visibility: .always, priority: 4),
-            // transportButton(isPlaying ? "pause.fill" : "play.fill", size: 34)
-            // calling togglePlay(). Icon 34pt, hit frame 34*1.8 = 61.2pt square —
-            // 1.31x its neighbours, confirming the existing metrics' 'larger than its
-            // neighbours' rule but at a much bigger absolute size than the 38pt the
-            // table currently gives it.
             ElementPlacement(
-                id: UUID(uuidString: "10cfd000-0000-4000-8000-000000000005")!,
-                element: .playPause, col: 5, row: 3, colSpan: 2,
+                id: UUID(uuidString: "10cfd005-0000-4000-8000-000000000000")!,
+                element: .playPause, col: 2, row: 6, colSpan: 2,
                 layer: .base, visibility: .always, priority: 0),
-            // transportButton("forward.fill", size: 26) calling nextTrack(). Same
-            // 46.8pt hit frame as previous.
             ElementPlacement(
-                id: UUID(uuidString: "10cfd000-0000-4000-8000-000000000006")!,
-                element: .next, col: 7, row: 3, colSpan: 2,
+                id: UUID(uuidString: "10cfd006-0000-4000-8000-000000000000")!,
+                element: .next, col: 4, row: 6, colSpan: 1,
                 layer: .base, visibility: .always, priority: 4),
         ])
 
-    /// The now-playing card. Four columns, because `WidgetCard` is 108pt wide
-    /// at its minimum and anything finer is unreadable.
-    ///
-    /// This is the one default that uses hover, and it is the clearest example
-    /// of why the layer distinction exists: the transport is `overlay` on the
-    /// artist row and `onHover`, so the buttons appear **over** the artist text
-    /// without the card growing. Compare a hover-only `progressBar`, which
-    /// would be `base` on a row of its own and would make it taller.
-    ///
-    /// Anchor's current launcher widget has no transport at all, because the
-    /// launcher dismisses on tap and a button you cannot press is worse than no
-    /// button. Cadence's opens the desktop player instead of dismissing, so
-    /// transport is worth having here.
     public static let defaultLauncher = SurfaceLayout(
         geometry: GridGeometry(columns: 4, contentScale: 0.82),
         placements: [
@@ -437,4 +418,143 @@ extension SurfaceLayout {
                 layer: .overlay, visibility: .onHover, priority: 3),
         ])
 
+}
+
+// MARK: - Presets
+
+/// Named starting points, offered per surface in the layout editor.
+///
+/// Distinct from `PlayerLayouts.defaults`, which is what a first launch gets
+/// and what Reset restores. A preset is a deliberate choice the user makes;
+/// applying one is a normal, undoable edit.
+public struct LayoutPreset: Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let detail: String
+    public let layout: SurfaceLayout
+
+    /// What is on offer for a given surface. The shipped default is always
+    /// first, so "put it back the way it was" is never more than one click away
+    /// even after experimenting.
+    public static func all(for surface: PlayerSurface) -> [LayoutPreset] {
+        var presets: [LayoutPreset] = [
+            LayoutPreset(
+                id: "default", name: "As shipped",
+                detail: "The layout Cadence starts with.",
+                layout: PlayerLayouts.defaults[surface])
+        ]
+        switch surface {
+        case .desktop:
+            presets.append(contentsOf: [.compactDesktop, .artworkOnly, .fullDesktop])
+        case .lockWidget:
+            presets.append(contentsOf: [.compactDesktop])
+        case .lockFull, .desktopFull:
+            // Both full-screen surfaces are two-column reading views; a
+            // "compact" variant of one is just the small widget.
+            break
+        case .launcher:
+            break
+        }
+        return presets
+    }
+
+    /// Artwork, title, transport. Nothing else — the smallest thing that is
+    /// still a player.
+    static let compactDesktop = LayoutPreset(
+        id: "compact", name: "Compact",
+        detail: "Artwork, title and transport only.",
+        layout: SurfaceLayout(
+            geometry: GridGeometry(columns: 6),
+            placements: [
+                ElementPlacement(
+                    element: .artwork, col: 0, row: 0, colSpan: 2, rowSpan: 2,
+                    priority: 0, artworkStyle: .vinyl),
+                ElementPlacement(element: .title, col: 2, row: 0, colSpan: 4, priority: 1),
+                ElementPlacement(element: .artist, col: 2, row: 1, colSpan: 4, priority: 2),
+                ElementPlacement(element: .previous, col: 2, row: 2, colSpan: 1, priority: 3),
+                ElementPlacement(element: .playPause, col: 3, row: 2, colSpan: 2, priority: 0),
+                ElementPlacement(element: .next, col: 5, row: 2, colSpan: 1, priority: 3),
+            ]))
+
+    /// Just the record, with the transport revealed on hover as an overlay so
+    /// the card never changes size.
+    static let artworkOnly = LayoutPreset(
+        id: "artwork", name: "Artwork only",
+        detail: "The record alone. Controls appear over it on hover.",
+        layout: SurfaceLayout(
+            geometry: GridGeometry(columns: 6),
+            placements: [
+                ElementPlacement(
+                    element: .artwork, col: 0, row: 0, colSpan: 6, rowSpan: 4,
+                    priority: 0,
+                    artworkStyle: ArtworkStyle(
+                        kind: .vinyl, showsStylus: true, showsProgressRing: true)),
+                ElementPlacement(
+                    element: .previous, col: 1, row: 3, colSpan: 1, layer: .overlay,
+                    visibility: .onHover, priority: 4),
+                ElementPlacement(
+                    element: .playPause, col: 2, row: 3, colSpan: 2, layer: .overlay,
+                    visibility: .onHover, priority: 0),
+                ElementPlacement(
+                    element: .next, col: 4, row: 3, colSpan: 1, layer: .overlay,
+                    visibility: .onHover, priority: 4),
+            ]))
+
+    /// Everything worth having on a desktop card, priorities ordered so it
+    /// degrades sensibly as it shrinks.
+    static let fullDesktop = LayoutPreset(
+        id: "full", name: "Everything",
+        detail: "Artwork, text, transport, progress, times, shuffle and repeat.",
+        layout: SurfaceLayout(
+            geometry: GridGeometry(columns: 6),
+            placements: [
+                ElementPlacement(
+                    element: .artwork, col: 0, row: 0, colSpan: 2, rowSpan: 2,
+                    priority: 0, artworkStyle: .vinyl),
+                ElementPlacement(element: .title, col: 2, row: 0, colSpan: 4, priority: 1),
+                ElementPlacement(element: .artist, col: 2, row: 1, colSpan: 4, priority: 3),
+                ElementPlacement(element: .album, col: 0, row: 2, colSpan: 6, priority: 6),
+                ElementPlacement(element: .progressBar, col: 0, row: 3, colSpan: 6, priority: 2),
+                ElementPlacement(element: .timeElapsed, col: 0, row: 4, colSpan: 1, priority: 5),
+                ElementPlacement(element: .shuffle, col: 1, row: 4, colSpan: 1, priority: 7),
+                ElementPlacement(element: .previous, col: 2, row: 4, colSpan: 1, priority: 4),
+                ElementPlacement(element: .playPause, col: 3, row: 4, colSpan: 1, priority: 0),
+                ElementPlacement(element: .next, col: 4, row: 4, colSpan: 1, priority: 4),
+                ElementPlacement(element: .timeRemaining, col: 5, row: 4, colSpan: 1, priority: 5),
+            ]))
+}
+
+// MARK: - Migration
+
+extension PlayerLayouts {
+    /// The latest migration number. Bump when a shipped default is corrected in
+    /// a way existing installs must receive.
+    static let currentMigration = 1
+
+    /// Bring a stored set of layouts up to date, once.
+    ///
+    /// Migration 1 fixes two defaults that were wrong rather than merely
+    /// different, and which a stored layout would otherwise mask forever:
+    ///
+    /// - `lockFull` put artwork and lyrics side by side in row 0 and then ran
+    ///   title, artist and transport across all twelve columns beneath BOTH, so
+    ///   the lyrics column was one row tall with a text block cutting through
+    ///   it. It is rebuilt around `rowSpan` as two halves.
+    /// - `lockWidget` never set `centersContent`, so its arrangement sat against
+    ///   the leading edge with all the slack on one side.
+    ///
+    /// The widget keeps every placement the user made — only the geometry flag
+    /// changes. The full-screen layout is replaced outright, because it is the
+    /// surface whose arrangement was the defect.
+    /// Pure: the stored version comes IN and the caller writes the new one back.
+    /// `Sources/Layout` deliberately imports neither SwiftUI nor Defaults, which
+    /// is what lets the shell harness compile it directly — putting a
+    /// `Defaults` read here breaks the whole test suite's build.
+    static func migrated(_ stored: PlayerLayouts, from version: Int) -> PlayerLayouts {
+        guard version < currentMigration else { return stored }
+        var updated = stored
+        updated.lockFull = .defaultLockFull
+        updated.lockWidget.geometry.centersContent = true
+        return updated
+    }
 }

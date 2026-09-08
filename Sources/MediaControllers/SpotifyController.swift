@@ -60,6 +60,7 @@ class SpotifyController: MediaControllerProtocol {
 
     init() {
         setupPlaybackStateChangeObserver()
+        setupAppLaunchObserver()
         setupSessionChangeObserver()
         Task {
             if isActive() {
@@ -68,15 +69,51 @@ class SpotifyController: MediaControllerProtocol {
         }
     }
 
+    /// The observer re-arms itself if the stream ever ends.
+    ///
+    /// `for await` over a notification sequence exits silently if the sequence
+    /// finishes, and nothing restarted it — the controller stayed alive with no
+    /// observer, so the player simply stopped updating for the rest of the
+    /// session with no error anywhere. That is the reported "sometimes doesn't
+    /// update", and it is the same shape as AudioTap giving up permanently when
+    /// no target app was running.
+    ///
+    /// This is not a poll. It blocks in `for await` exactly as before; the loop
+    /// only goes round again if the stream ends, and it stops entirely when the
+    /// task is cancelled.
     private func setupPlaybackStateChangeObserver() {
         notificationTask = Task { @Sendable [weak self] in
-            let notifications = DistributedNotificationCenter.default().notifications(
-                named: NSNotification.Name("com.spotify.client.PlaybackStateChanged")
-            )
-
-            for await _ in notifications {
+            while !Task.isCancelled {
+                let notifications = DistributedNotificationCenter.default().notifications(
+                    named: NSNotification.Name("com.spotify.client.PlaybackStateChanged")
+                )
+                for await _ in notifications {
+                    await self?.updatePlaybackInfo()
+                }
+                guard self != nil, !Task.isCancelled else { return }
+                // Re-arming instantly on a stream that ends instantly would be
+                // a spin. One second is imperceptible for a stream that is only
+                // expected to end when something has gone wrong.
+                try? await Task.sleep(for: .seconds(1))
                 await self?.updatePlaybackInfo()
             }
+        }
+    }
+
+    /// Spotify does not post `PlaybackStateChanged` when it LAUNCHES, so a
+    /// track already playing when it opens was invisible until the next
+    /// user-driven change.
+    private func setupAppLaunchObserver() {
+        launchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication,
+                app.bundleIdentifier == "com.spotify.client"
+            else { return }
+            Task { await self?.updatePlaybackInfo() }
         }
     }
 
@@ -100,7 +137,12 @@ class SpotifyController: MediaControllerProtocol {
             }
     }
 
+    private var launchObserver: NSObjectProtocol?
+
     deinit {
+        if let launchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(launchObserver)
+        }
         notificationTask?.cancel()
         artworkFetchTask?.cancel()
         canvasFetchTask?.cancel()

@@ -132,6 +132,10 @@ struct PlayerActions {
     var toggleShuffle: () -> Void
     var toggleRepeat: () -> Void
     var toggleLyrics: () -> Void
+    /// Clicking the artwork. Opens the full-screen view on the surfaces that
+    /// have one; a no-op elsewhere, which is why it is an action rather than a
+    /// hard-coded gesture inside the renderer.
+    var expand: () -> Void = {}
 
     @MainActor static func live(_ music: MusicManager) -> PlayerActions {
         PlayerActions(
@@ -149,5 +153,5 @@ struct PlayerActions {
     /// control selects it for editing rather than driving playback.
     static let inert = PlayerActions(
         playPause: {}, next: {}, previous: {}, seekBy: { _ in }, seekTo: { _ in },
-        toggleShuffle: {}, toggleRepeat: {}, toggleLyrics: {})
+        toggleShuffle: {}, toggleRepeat: {}, toggleLyrics: {}, expand: {})
 }

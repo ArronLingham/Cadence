@@ -247,7 +247,9 @@ public enum GridSolver {
             existing.id != ignoredID
                 && existing.id != candidate.id
                 && existing.layer == .base
-                && existing.row == candidate.row
+                // Rows OVERLAP rather than match: a placement spanning rows 0-2
+                // conflicts with anything in row 1, which row equality misses.
+                && existing.rows.overlaps(candidate.rows)
                 && existing.columns.overlaps(candidate.columns)
         }
     }
@@ -267,6 +269,53 @@ public enum GridSolver {
     ///
     /// Returns `nil` outside the content area. `row` may be one past the last
     /// occupied row, which is how you drag something onto a new bottom row.
+    /// Where a drop lands: on a cell, or in the seam BETWEEN two rows.
+    ///
+    /// The seam case is the whole reason this exists. `cell(at:)` can only
+    /// answer with an existing row index or one-past-the-end, so the only way
+    /// to make a row was to drop below everything — there was no way to insert
+    /// between two rows at all, and `normalisingRows` renumbers contiguously
+    /// after every edit so a gap cannot even be expressed transiently.
+    public enum DropTarget: Equatable, Sendable {
+        case cell(col: Int, row: Int)
+        /// Open a new row immediately before `before`, and land there.
+        case seam(col: Int, before: Int)
+    }
+
+    /// `seamBand` is how close to a row boundary counts as "between". It is
+    /// generous on purpose: a seam the width of a hairline is a seam nobody can
+    /// hit, and the reported symptom was that dragging felt finicky.
+    public static func dropTarget(
+        at point: CGPoint, geometry: GridGeometry, totalWidth: CGFloat,
+        rowHeights: [CGFloat], seamBand: CGFloat = 10
+    ) -> DropTarget? {
+        let columns = max(1, geometry.columns)
+        let cw = cellWidth(for: geometry, totalWidth: totalWidth)
+        guard cw > 0 else { return nil }
+        let x = point.x - geometry.padding
+        let col = min(columns - 1, max(0, Int(max(0, x) / (cw + geometry.gutter))))
+
+        // Row boundaries in the same coordinate space the renderer used.
+        var boundaries: [CGFloat] = [geometry.padding]
+        var y = geometry.padding
+        for height in rowHeights {
+            y += height
+            boundaries.append(y)
+            y += geometry.gutter
+        }
+
+        for (index, edge) in boundaries.enumerated() where abs(point.y - edge) <= seamBand {
+            // The seam above row 0 inserts at 0; the seam below the last row is
+            // just "append", which `cell` already handled, so both ends work.
+            return .seam(col: col, before: index)
+        }
+
+        guard let hit = cell(
+            at: point, geometry: geometry, totalWidth: totalWidth, rowHeights: rowHeights)
+        else { return nil }
+        return .cell(col: hit.col, row: hit.row)
+    }
+
     public static func cell(
         at point: CGPoint, geometry: GridGeometry, totalWidth: CGFloat, rowHeights: [CGFloat]
     ) -> (col: Int, row: Int)? {
@@ -314,21 +363,41 @@ public enum GridSolver {
         _ placements: [ElementPlacement], cellWidth: CGFloat, gutter: CGFloat,
         scale: CGFloat = 1
     ) -> [CGFloat] {
-        guard let maxRow = placements.map(\.row).max() else { return [] }
-        return (0...maxRow).map { row in
+        guard let maxRow = placements.map({ $0.rows.upperBound - 1 }).max() else { return [] }
+
+        func need(_ p: ElementPlacement) -> CGFloat {
+            let width = resolvedWidth(span: p.colSpan, cellWidth: cellWidth, gutter: gutter)
+            // Artwork is square, so its height IS its width and must not be
+            // scaled again — it already grew with the cells.
+            return p.element.metrics.growsVertically
+                ? p.element.metrics.height(width)
+                : p.element.metrics.height(width) * scale
+        }
+
+        // Single-row placements set the baseline.
+        var heights = (0...maxRow).map { row in
             placements
-                .filter { $0.row == row && $0.layer == .base }
-                .map { p in
-                    let width = resolvedWidth(
-                        span: p.colSpan, cellWidth: cellWidth, gutter: gutter)
-                    // Artwork is square, so its height IS its width and must not
-                    // be scaled again — it already grew with the cells.
-                    return p.element.metrics.growsVertically
-                        ? p.element.metrics.height(width)
-                        : p.element.metrics.height(width) * scale
-                }
+                .filter { $0.rowSpan == 1 && $0.row == row && $0.layer == .base }
+                .map(need)
                 .max() ?? 0
         }
+
+        // A spanning placement does NOT force one row to be tall. It only has to
+        // fit across the rows it covers, gutters included; any shortfall is
+        // spread evenly over them. Giving its whole height to its first row
+        // would make a 4-row lyrics column produce one enormous row and three
+        // empty ones.
+        for p in placements where p.layer == .base && p.rowSpan > 1 {
+            let rows = p.rows.clamped(to: 0..<heights.count)
+            guard !rows.isEmpty else { continue }
+            let gutters = gutter * CGFloat(rows.count - 1)
+            let available = rows.reduce(0) { $0 + heights[$1] } + gutters
+            let deficit = need(p) - available
+            guard deficit > 0 else { continue }
+            let share = deficit / CGFloat(rows.count)
+            for row in rows { heights[row] += share }
+        }
+        return heights
     }
 
     static func totalHeight(_ rowHeights: [CGFloat], geometry: GridGeometry) -> CGFloat {
@@ -347,9 +416,14 @@ public enum GridSolver {
         var kept: [ElementPlacement] = []
         for p in placements.sorted(by: { ($0.row, $0.col) < ($1.row, $1.col) }) {
             guard p.layer == .base else { kept.append(p); continue }
-            let taken = occupied[p.row] ?? []
-            if taken.isDisjoint(with: p.columns) {
-                occupied[p.row] = taken.union(p.columns)
+            // Free only if EVERY row it spans is free across its columns, and
+            // then all of them are marked. Checking the first row alone would
+            // let a tall element be overwritten from its second row down.
+            let fits = p.rows.allSatisfy { row in
+                (occupied[row] ?? []).isDisjoint(with: p.columns)
+            }
+            if fits {
+                for row in p.rows { occupied[row, default: []].formUnion(p.columns) }
                 kept.append(p)
             }
         }
@@ -409,7 +483,13 @@ public enum GridSolver {
     /// different row from the thing it was drawn on top of.
     @discardableResult
     private static func compact(_ placements: inout [ElementPlacement]) -> [Int: Int] {
-        let occupied = Set(placements.map(\.row)).sorted()
+        // COVERED rows, not starting rows. A placement spanning rows 0-2 owns
+        // rows 1 and 2 without starting there; treating those as empty deletes
+        // them out from under it, and the span silently collapses the first
+        // time anything is dropped above it.
+        var coveredRows: Set<Int> = []
+        for placement in placements { coveredRows.formUnion(placement.rows) }
+        let occupied = coveredRows.sorted()
         var map: [Int: Int] = [:]
         for (newIndex, oldRow) in occupied.enumerated() { map[oldRow] = newIndex }
         for index in placements.indices {
@@ -475,7 +555,15 @@ public enum GridSolver {
             guard p.row < rowOrigins.count else { return nil }
             let width = resolvedWidth(span: p.colSpan, cellWidth: cellWidth, gutter: geometry.gutter)
             let x = geometry.padding + CGFloat(p.col) * (cellWidth + geometry.gutter)
-            let rowHeight = rowHeights[p.row]
+            // A spanning placement's box is every row it covers plus the
+            // gutters BETWEEN them — the gutters become usable space rather
+            // than dead bands through the middle of a tall element.
+            let spanned = p.rows.clamped(to: 0..<rowHeights.count)
+            let rowHeight =
+                spanned.isEmpty
+                ? rowHeights[p.row]
+                : spanned.reduce(0) { $0 + rowHeights[$1] }
+                    + geometry.gutter * CGFloat(spanned.count - 1)
             let metrics = p.element.metrics
 
             // An element that does not grow keeps its intrinsic size and is
@@ -484,13 +572,22 @@ public enum GridSolver {
             // wrong next to a 30pt one.
             let scaled = metrics.growsVertically
                 ? metrics.height(width) : metrics.height(width) * geometry.contentScale
-            let elementHeight = min(scaled, rowHeight)
+            // A multi-row placement FILLS the box it reserved. Capping it at the
+            // element's intrinsic height would reserve four rows of space and
+            // then draw one row of content in the middle of them, which is the
+            // reserve-but-don't-use bug the assertion "a spanned frame covers
+            // its rows" exists to catch. Asking for N rows is the request.
+            let elementHeight = p.rowSpan > 1 ? rowHeight : min(scaled, rowHeight)
             let frame: CGRect
             if metrics.growsHorizontally {
                 frame = CGRect(
                     x: x, y: rowOrigins[p.row] + (rowHeight - elementHeight) / 2,
                     width: width, height: elementHeight)
             } else {
+                // Square elements centre in whatever box they were given — one
+                // row, or the taller span. `elementHeight` already accounts for
+                // the difference, so there is one branch, not two.
+
                 let intrinsic = min(elementHeight, width)
                 frame = CGRect(
                     x: x + (width - intrinsic) / 2,

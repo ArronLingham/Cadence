@@ -6,7 +6,7 @@ that is how Anchor's checklist grew to 770 lines of archaeology.
 
 ## Already proven, do not re-test by hand
 
-`tests/run_gridsolver_tests.sh` — **70 assertions**, compiling the real
+`tests/run_gridsolver_tests.sh` — **143 assertions**, compiling the real
 `Sources/Layout/*.swift`. Covers the four shipped defaults as data (no
 overlapping bases, contiguous rows, nothing overflowing the grid, every span
 meets `minSpan`, a priority-0 element exists, no orphaned overlays), overlap
@@ -40,8 +40,14 @@ Both surfaces are the same `PlayerSurfaceView` as the desktop player, against
 their own layouts. Preview them **without locking the machine**:
 
 ```bash
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LOCK=widget
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LOCK=full
+# Resolve the Debug build directory rather than hard-coding a DerivedData hash.
+# The preview hooks are compiled out of Release, so this must be a Debug build.
+DEBUG_APP="$(xcodebuild -project Cadence.xcodeproj -scheme Cadence \
+  -configuration Debug -showBuildSettings 2>/dev/null \
+  | sed -n 's/^ *BUILT_PRODUCTS_DIR = //p' | tr -d '\r' | head -1)/Cadence.app"
+
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LOCK=widget
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LOCK=full
 ```
 
 Debug only. `scripts/check-debug-hooks.sh` asserts it is compiled out of
@@ -74,8 +80,8 @@ so it had been built, committed and **never once rendered**, which is the
 It has a Debug preview now:
 
 ```bash
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LAUNCHER=1      # hover-only controls
-open -n <build>/Cadence.app --env CADENCE_PREVIEW_LAUNCHER=hover  # always visible
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LAUNCHER=1      # controls on hover
+open -n "$DEBUG_APP" --env CADENCE_PREVIEW_LAUNCHER=hover  # always visible
 ```
 
 Verified: the card draws at 220pt on `.regularMaterial` with the right corner
@@ -119,6 +125,28 @@ Worth checking by hand:
 - **Reset this surface** returns exactly the shipped default.
 - **Switch surfaces and come back.** Each of the four is independent; a change
   to one must never move an element on another.
+
+## The first real playback pass
+
+Run 2026-09-07, against Spotify, by hand. **68 of 104 checks passed and about
+thirty defects came out of it** — the single most productive hour this project
+has had, and the direct answer to the line that stood at the top of this file
+for weeks: nothing here had ever seen a real track.
+
+The defects clustered, and the clusters are the lesson:
+
+- **The window ate the pointer.** `isMovableByWindowBackground` armed an AppKit
+  drag before SwiftUI saw the event, so the scrubber could not scrub; and the
+  scrubber had no drag handler at all, only a tap. There were five resize
+  handles, not eight, inside a 6pt band thinner than the card's own padding.
+- **Settings that were read but never applied.** Four of them. The reachability
+  audit passed every one, because "some file reads this key" was its whole test.
+  `scripts/audit-inert-settings.sh` exists now for that shape.
+- **The engine could not say what the surfaces needed.** `rowSpan` was described
+  in CLAUDE.md and in four comments and implemented nowhere, so the full-screen
+  player could not put lyrics beside artwork.
+- **A fixed default did not reach the machine it was written for**, because a
+  stored layout overrode it. Unreachable data, not unreachable code.
 
 ## What only a person can check
 
@@ -242,6 +270,33 @@ belongs in the settings pane instead.
 renderer for a placeable element, and observing a notification nothing posts
 each make it fail.
 
+`scripts/audit-main-actor.sh` — finds a `@Published` mutated from a bare
+`Task {}` in a type that is not itself `@MainActor`.
+
+This is a deadlock, not a style rule. `MusicManager.updateIdleState` debounced
+with a bare `Task {}`, so it mutated `isPlayerIdle` on the cooperative pool.
+Combine takes its publisher lock to send; SwiftUI's subscriber then tries to
+sync onto main to invalidate the attribute; if main is inside its own publish it
+is already waiting for that same lock. Neither side times out and neither
+crashes — **the app simply stops**, and because it is a menu-bar agent it is not
+listed in Force Quit and cannot be quit from the UI. It had to be killed by pid.
+
+`hang-sample-2026-09-07.txt` is the sample: 2547 of 2547 frames in
+`_os_unfair_lock_lock_slow`. It survived every automated check in this file,
+because it needs a playback state change on main to land inside the three-second
+idle debounce — and nothing here had seen a real track.
+
+**If it ever hangs again**, Force Quit will not list it:
+
+```bash
+pkill -f 'Cadence.app/Contents/MacOS/Cadence'
+# and to capture why, BEFORE killing:
+sample $(pgrep -f 'Cadence.app/Contents/MacOS/Cadence' | head -1) 3 -f /tmp/cadence-hang.txt
+```
+
+**Proved non-vacuous.** Reinstating the bare `Task {}` turns it red and names
+the line. It scans 17 publishing files and found exactly one offender.
+
 ## Stress
 
 `tests/run_runtime_stress.sh` — **LIVE**, and not part of the unit run. It
@@ -310,8 +365,21 @@ too.
 | Release, idle, 19 min uptime, shipped defaults | 0.01% | 0.00% | 0.00% | 0.48% | 12.5 MB |
 | Release, same, after the review fixes | 0.03% | 0.00% | 0.00% | 0.95% | 13.2 MB |
 | Release, all fixes + memoisation | 0.01% | 0.00% | 0.00% | 0.47% | 16.2 MB |
+| Release, after the 30-defect pass, settled 20 min | 0.03% | 0.00% | 0.00% | 0.96% | 16.2 MB |
 
-86-87 samples each, all after a 13+ minute settle. **All three rows are the same
+The last row is 144 samples over 300s at 20 minutes of uptime; the others are
+86-87 samples each. All after a 13+ minute settle.
+
+**The last row is the same number as the row above it.** Seven commits, about
+twenty files, a fifth surface, row spanning in the solver and several new
+observers, and RSS came back at 16.2 MB to the decimal. Every median and p90 is
+still 0.00, so the mean differences are noise by this file's own rule.
+
+A first attempt at that row read 30.4 MB mean and looked like a 2x regression.
+It was measured from 8 seconds after launch, so it averaged the entire settling
+curve — the script warns about exactly this and the warning was in the output.
+Re-measured at 20 minutes it is 16.2 MB. **Do not compare a figure that includes
+launch against one that does not.** **All three rows are the same
 number.** Every median and p90 is 0.00, so each mean is carried entirely by a
 noisy tail, and this project's own rule is not to read a change of less than
 roughly 2x as signal. The RSS spread (12.5 / 13.2 / 16.2 MB) is the same story

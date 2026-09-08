@@ -1,15 +1,16 @@
 # Cadence
 
-A native macOS music player. One playback core drives four surfaces — a
-lock-screen widget, a lock-screen full-screen player, a launcher widget and a
-free-floating desktop player — and each one has its own layout you compose by
-hand from the same set of elements.
+A native macOS music player. One playback core drives five surfaces — a
+lock-screen widget, a lock-screen full-screen player, a full-screen desktop
+player, a launcher widget and a free-floating desktop player — and each one has
+its own layout you compose by hand from the same set of elements.
 
-> **Status: it builds and runs.** The desktop player and both lock-screen
-> surfaces work; the layout editor works. **It has never been tested against
-> real playback** — every check so far ran against an empty player or a frozen
-> sample — and nothing has yet been seen above a real lock screen. See
-> `MANUAL-TESTS.md` for what still needs a person.
+> **Status: it builds, runs, and has been driven against real playback.**
+> That first hand pass found about thirty defects — a scrubber with no drag
+> handler, three of eight resize handles missing, a progress ring with no track
+> circle, and four settings that were stored, read and inert — and they are
+> fixed. What remains unverified is listed in `MANUAL-TESTS.md`: a live stream's
+> NaN duration, Spotify Canvas, open-at-login, and a full day of uptime.
 
 ## The idea
 
@@ -49,9 +50,11 @@ xcodebuild -project Cadence.xcodeproj -scheme Cadence -configuration Release \
 
 | | |
 |---|---|
-| `tests/run_gridsolver_tests.sh` | 93 assertions on the layout engine, compiling the real source |
+| `tests/run_gridsolver_tests.sh` | 143 assertions on the layout engine, compiling the real source |
 | `tests/run_runtime_stress.sh` | **live** — hostile settings and malformed layouts against the running app |
 | `scripts/audit-reachability.sh` | finds settings, notifications and elements no user can reach |
+| `scripts/audit-main-actor.sh` | a `@Published` written off the main actor — the shape that deadlocked the app |
+| `scripts/audit-inert-settings.sh` | a setting named after something on screen that its renderer never reads |
 | `scripts/check-debug-hooks.sh` | asserts the debug hooks are compiled out of Release |
 | `scripts/measure.sh` | CPU and RSS sampler |
 

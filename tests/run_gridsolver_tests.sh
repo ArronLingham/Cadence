@@ -83,7 +83,13 @@ for (name, surface) in [
 
     // Rows contiguous from zero — a gap means the author miscounted, and the
     // solver would compact it away, hiding the mistake.
-    let rows = Set(surface.placements.map(\.row)).sorted()
+    //
+    // COVERED rows, not starting rows. An element spanning rows 0-2 occupies
+    // rows 1 and 2 without starting there, so counting start rows alone reports
+    // a phantom gap for every layout that uses rowSpan.
+    var covered: Set<Int> = []
+    for placement in surface.placements { covered.formUnion(placement.rows) }
+    let rows = covered.sorted()
     ok("\(name): rows contiguous from 0", rows == Array(0..<rows.count), "\(rows)")
 
     // Nothing may hang off the right-hand edge.
@@ -561,6 +567,165 @@ ok("default ids are unique within a surface",
 
 // ---------------------------------------------------------------------------
 print("")
+
+print("Migration")
+
+// A migration that does not preserve the user's own work is worse than no
+// migration. This checks the shape: the widget keeps its placements and gains
+// only the geometry flag; the full-screen surface is replaced.
+var preMigration = PlayerLayouts.defaults
+preMigration.lockWidget.geometry.centersContent = false
+preMigration.lockWidget.placements = [
+    ElementPlacement(element: .clock, col: 0, row: 0, colSpan: 2, priority: 0)
+]
+preMigration.desktop.placements = [
+    ElementPlacement(element: .timer, col: 0, row: 0, colSpan: 2, priority: 0)
+]
+let after = PlayerLayouts.migrated(preMigration, from: 0)
+ok("migration centres the lock widget",
+   after.lockWidget.geometry.centersContent)
+ok("migration keeps the user's lock-widget placements",
+   after.lockWidget.placements.map(\.element) == [.clock])
+ok("migration does not touch the desktop layout",
+   after.desktop.placements.map(\.element) == [.timer])
+ok("migration replaces the full-screen layout",
+   after.lockFull == SurfaceLayout.defaultLockFull)
+// Running twice must be a no-op, or every launch overwrites a surface the
+// user has since rearranged.
+var alreadyMigrated: PlayerLayouts = after
+alreadyMigrated.lockFull = SurfaceLayout(
+    geometry: GridGeometry(columns: 12), placements: [])
+ok("migration runs once, not on every launch",
+   PlayerLayouts.migrated(alreadyMigrated, from: PlayerLayouts.currentMigration)
+       .lockFull.placements.isEmpty)
+
+print("Presets")
+
+// Presets are layout DATA, and data can be wrong in exactly the ways the
+// shipped defaults are checked for. A preset that overlaps or overflows would
+// be silently repaired by the solver, so the user would apply "Everything" and
+// quietly get less than everything.
+for surface in PlayerSurface.allCases {
+    for preset in LayoutPreset.all(for: surface) {
+        let name = "\(surface) / \(preset.name)"
+        let g = preset.layout.geometry
+        ok("\(name): nothing overflows the grid",
+           preset.layout.placements.allSatisfy { $0.col >= 0 && $0.col + $0.colSpan <= g.columns })
+        ok("\(name): every span meets its minimum",
+           preset.layout.placements.allSatisfy { $0.colSpan >= $0.element.metrics.minSpan })
+        ok("\(name): no two base placements overlap",
+           preset.layout.placements.filter { $0.layer == .base }.count
+               == GridSolver.solve(
+                   layout: preset.layout,
+                   available: CGSize(width: 600, height: 5000), hovering: true
+               ).elements.filter { $0.placement.layer == .base }.count)
+        ok("\(name): something survives the smallest size",
+           !GridSolver.solve(
+               layout: preset.layout, available: CGSize(width: 140, height: 80),
+               hovering: false).elements.isEmpty)
+    }
+}
+
+print("Row spanning")
+
+// `rowSpan` was described in this project's notes long before any code
+// implemented it — it existed only in comments in DefaultLayouts.swift. These
+// assertions are what make it real rather than described.
+
+let spanGeometry = GridGeometry(columns: 4)
+
+// A tall element must conflict with anything in ANY row it covers, not just
+// the row it starts in.
+let tall = ElementPlacement(
+    element: .lyrics, col: 0, row: 0, colSpan: 2, rowSpan: 3, priority: 0)
+let spanLayout = SurfaceLayout(geometry: spanGeometry, placements: [tall])
+ok("a placement inside a spanned row is refused",
+   !GridSolver.canPlace(
+       ElementPlacement(element: .title, col: 0, row: 1, colSpan: 2), in: spanLayout))
+ok("a placement below a spanned range is allowed",
+   GridSolver.canPlace(
+       ElementPlacement(element: .title, col: 0, row: 3, colSpan: 2), in: spanLayout))
+ok("a placement beside a spanned range is allowed",
+   GridSolver.canPlace(
+       ElementPlacement(element: .title, col: 2, row: 1, colSpan: 2), in: spanLayout))
+
+// Two tall elements that merely touch must not be treated as overlapping.
+ok("adjacent spans do not collide",
+   GridSolver.canPlace(
+       ElementPlacement(element: .album, col: 0, row: 3, colSpan: 2, rowSpan: 2),
+       in: spanLayout))
+
+// The overlap RESOLVER has to agree with canPlace, or a hand-edited plist can
+// produce a layout the solver happily draws on top of itself.
+let contested = SurfaceLayout(
+    geometry: spanGeometry,
+    placements: [
+        tall,
+        ElementPlacement(element: .title, col: 0, row: 1, colSpan: 2, priority: 0),
+    ])
+let contestedSolved = GridSolver.solve(
+    layout: contested, available: CGSize(width: 400, height: 4000), hovering: false)
+ok("an element buried inside a spanned range is dropped by the resolver",
+   contestedSolved.elements.count == 1)
+
+// A spanning element must NOT inflate a single row. Its height is spread over
+// the rows it covers; giving it all to the first row makes one enormous row and
+// several empty ones, which is exactly the full-screen bug this was added for.
+// Artwork, not lyrics: artwork is SQUARE, so at a 2-column span it needs about
+// 188pt against three ~17pt text rows. A lyrics element already fits in three
+// rows, the deficit is zero, and the distribution code never runs — which is
+// why the first version of this test passed against its own negative control.
+let spread = SurfaceLayout(
+    geometry: spanGeometry,
+    placements: [
+        ElementPlacement(element: .artwork, col: 0, row: 0, colSpan: 2, rowSpan: 3, priority: 0),
+        ElementPlacement(element: .title, col: 2, row: 0, colSpan: 2, priority: 0),
+        ElementPlacement(element: .artist, col: 2, row: 1, colSpan: 2, priority: 0),
+        ElementPlacement(element: .album, col: 2, row: 2, colSpan: 2, priority: 0),
+    ])
+let spreadHeights = GridSolver.rowHeights(
+    spread.placements, cellWidth: 90, gutter: 8, scale: 1)
+// NB: an earlier version of this assertion compared each row against 90% of
+// the total and PASSED with the deficit dumped entirely on the first row — a
+// vacuous test, caught by running the control. Compare the rows to EACH OTHER
+// instead: even distribution makes them near-equal, dumping does not.
+let tallestRow = spreadHeights.max() ?? 0
+let shortestRow = spreadHeights.min() ?? 0
+ok("a spanned element spreads its height over its rows rather than inflating one",
+   spreadHeights.count == 3 && shortestRow > 0 && tallestRow <= shortestRow * 1.35,
+   "rows \(spreadHeights)")
+
+// The drawn box has to actually cover the rows, gutters included, or the
+// element renders in a fraction of the space the grid reserved for it.
+let spreadSolved = GridSolver.solve(
+    layout: spread, available: CGSize(width: 400, height: 4000), hovering: false)
+let lyricElement = spreadSolved.elements.first { (e: GridSolver.ResolvedElement) -> Bool in
+    e.placement.rowSpan > 1
+}
+let lyricFrame = lyricElement?.frame
+let rightColumn: [CGFloat] = spreadSolved.elements
+    .filter { $0.placement.col == 2 }
+    .map { $0.frame.height }
+var stackedHeight: CGFloat = 0
+for h in rightColumn { stackedHeight += h }
+ok("a spanned frame covers its rows",
+   (lyricFrame?.height ?? 0) >= stackedHeight)
+
+// Old layouts have no rowSpan field at all; a missing value must mean 1.
+let noSpan = #"{"element":"title","col":0,"row":0,"colSpan":2}"#
+let noSpanPlacement = try? JSONDecoder().decode(
+    ElementPlacement.self, from: Data(noSpan.utf8))
+ok("a placement written before row spanning decodes as rowSpan 1",
+   noSpanPlacement?.rowSpan == 1)
+
+// A hostile plist can say 0 or -5. Clamped, not fatal.
+let zeroSpan = #"{"element":"title","col":0,"row":0,"rowSpan":0}"#
+let negSpan = #"{"element":"title","col":0,"row":0,"rowSpan":-5}"#
+let zeroDecoded = try? JSONDecoder().decode(ElementPlacement.self, from: Data(zeroSpan.utf8))
+let negDecoded = try? JSONDecoder().decode(ElementPlacement.self, from: Data(negSpan.utf8))
+ok("a non-positive rowSpan is clamped to 1, not fatal",
+   zeroDecoded?.rowSpan == 1 && negDecoded?.rowSpan == 1)
+
 print("\(passes)/\(passes + failures) passed")
 if failures > 0 { exit(1) }
 SWIFT
@@ -633,6 +798,35 @@ swiftc -O -o "$WORK/tests" \
 #
 #   PlayerLayouts.init(from:) -> plain synthesised Decodable
 #       66/70 — "a missing surface falls back to its default"
+#
+#   DefaultLayouts -> overlap two placements in the Compact preset
+#       => "no two base placements overlap" FAILS for every surface that
+#          offers it  (132/134)
+#
+#   ElementPlacement.canPlace -> `existing.row == candidate.row` instead of
+#       `existing.rows.overlaps(candidate.rows)`
+#       => "a placement inside a spanned row is refused" FAILS  (101/102)
+#
+#   GridSolver.removeBaseOverlaps -> check and mark only `p.row`
+#       => "an element buried inside a spanned range is dropped by the
+#          resolver" FAILS  (101/102)
+#
+#   GridSolver.frames -> `min(scaled, rowHeight)` for every placement
+#       => "a spanned frame covers its rows" FAILS  (101/102)
+#
+#   GridSolver.rowHeights -> `heights[p.row] += deficit` instead of sharing
+#       => "a spanned element spreads its height..." FAILS, rows [138, 17, 17]
+#          (101/102)
+#       NB: the FIRST version of this assertion passed against this control —
+#       it compared each row to 90% of the total, and it used a LYRICS element,
+#       which already fits in three rows, so the deficit was zero and the code
+#       under test never ran. Both faults were found by running the control,
+#       which is the entire reason this file insists on them. It now uses
+#       artwork (square, ~188pt at a 2-column span) and compares the rows to
+#       each other.
+#
+#   ElementPlacement.init(from:) -> drop `max(1, ...)` on rowSpan
+#       => "a non-positive rowSpan is clamped to 1, not fatal" FAILS  (101/102)
 #
 # One thing here is NOT protected by a control, and is called out rather than
 # hidden: `hoverMetrics` measuring at `.infinity` rather than at the window's

@@ -17,6 +17,7 @@
  */
 
 import AppKit
+import Defaults
 import SwiftUI
 
 /// Draws one surface from its `SurfaceLayout`.
@@ -32,6 +33,9 @@ struct PlayerSurfaceView: View {
     var hovering: Bool = false
     /// Frozen data for the settings preview. `nil` means live playback.
     var snapshot: PlayerSnapshot?
+    /// What a single click on the artwork does. Defaults to nothing, so a
+    /// surface with no full-screen view of its own is unaffected.
+    var onExpand: () -> Void = {}
 
     var body: some View {
         // Two bodies, and the split is the point: the live one observes
@@ -44,7 +48,8 @@ struct PlayerSurfaceView: View {
                 layout: layout, style: style, hovering: hovering,
                 data: snapshot, actions: .inert, isLive: false)
         } else {
-            LiveSurfaceBody(layout: layout, style: style, hovering: hovering)
+            LiveSurfaceBody(
+                layout: layout, style: style, hovering: hovering, onExpand: onExpand)
         }
     }
 }
@@ -54,13 +59,18 @@ private struct LiveSurfaceBody: View {
     let layout: SurfaceLayout
     let style: SurfaceStyle
     let hovering: Bool
+    /// What clicking the artwork does. Supplied by the host, because only the
+    /// host knows whether it owns a full-screen view.
+    let onExpand: () -> Void
 
     @ObservedObject private var music = MusicManager.shared
 
     var body: some View {
-        SurfaceBody(
+        var actions = PlayerActions.live(music)
+        actions.expand = onExpand
+        return SurfaceBody(
             layout: layout, style: style, hovering: hovering,
-            data: .live(music), actions: .live(music), isLive: true)
+            data: .live(music), actions: actions, isLive: true)
     }
 }
 
@@ -99,22 +109,60 @@ struct SurfaceStyle {
     var ink: Color
     var subtleInk: Color
     var accent: Color
+    /// What the progress bar and ring are drawn in.
+    ///
+    /// `sliderColor` was a live setting with three options whose only reader in
+    /// the whole tree was `RealTimeWaveformScrubberView` — a view that is only
+    /// on screen when the real-time waveform is enabled AND a visualiser is
+    /// placed. The ordinary progress bar hardcoded `ink`, so the picker did
+    /// nothing for the element it names. Resolved once here rather than at each
+    /// call site so the bar and the ring can never disagree.
+    var progress: Color
     /// Multiplies every font size. Comes from the layout's own
     /// `GridGeometry.contentScale`, which also drives the row heights — two
     /// separate constants is how a 24pt title ended up in a 20pt row.
     var textScale: CGFloat
 
+    /// `sliderColor` is a PARAMETER, not a `Defaults` read inside this function.
+    ///
+    /// A bare `Defaults[...]` here would be read during body evaluation and
+    /// therefore never observed, so changing the picker would not redraw
+    /// anything until some unrelated publish happened to refresh the view —
+    /// which looks exactly like "progress bar colour doesn't change". Every
+    /// caller holds it in an `@Default` property and passes it in.
     static func forSurface(
-        _ surface: PlayerSurface, albumColor: NSColor, tinted: Bool, scale: CGFloat
+        _ surface: PlayerSurface, albumColor: NSColor, tinted: Bool, scale: CGFloat,
+        sliderColor: SliderColorEnum = .white, accentColor: Color = .blue
     ) -> SurfaceStyle {
         let ink: Color =
             tinted
             ? (SurfaceStyle.isLight(SurfaceStyle.muted(albumColor))
                 ? .black.opacity(0.82) : .white.opacity(0.92))
             : .white
+        let progress: Color
+        switch sliderColor {
+        case .white: progress = ink
+        case .albumArt: progress = Color(nsColor: SurfaceStyle.vivid(albumColor))
+        case .accent: progress = accentColor
+        }
         return SurfaceStyle(
             ink: ink, subtleInk: ink.opacity(0.55), accent: Color(nsColor: albumColor),
-            textScale: scale)
+            progress: progress, textScale: scale)
+    }
+
+    /// The album colour with enough saturation left to read as a colour.
+    ///
+    /// `muted` exists to stop a background shouting; using it for the bar as
+    /// well would make "Match album art" almost indistinguishable from white on
+    /// a tinted card, which is the complaint that "progress bar colour doesn't
+    /// change" partly describes.
+    static func vivid(_ color: NSColor) -> NSColor {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return .white }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
+        rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        return NSColor(
+            hue: hue, saturation: max(saturation, 0.55),
+            brightness: max(brightness, 0.85), alpha: alpha)
     }
 
     /// Clamp saturation and brightness so an album's colour is a background
@@ -157,6 +205,10 @@ struct PlayerElementView: View {
     var isLive: Bool = true
 
     @State private var showingRemaining = false
+    /// Non-nil only while the scrubber is being dragged. The bar follows the
+    /// pointer from this, because `data.position` keeps advancing from the
+    /// controller's last report and would fight the drag.
+    @State private var scrubFraction: CGFloat?
 
     var body: some View {
         switch placement.element {
@@ -213,7 +265,13 @@ struct PlayerElementView: View {
     /// Before this, a span-6 placement rendered a 13pt speech-bubble glyph in
     /// the middle of an empty half-screen.
     @ViewBuilder private var lyrics: some View {
-        if placement.colSpan >= 3 {
+        // Threshold was 3, so on any surface where the user gave lyrics a
+        // narrow slot they silently got a TOGGLE BUTTON instead of words —
+        // which is why lyrics "work on the full-screen lock screen but not on
+        // anything else". Two columns is enough for a line of text; only a
+        // genuinely 1-column slot falls back to the button, and that fallback
+        // is now the documented behaviour rather than a surprise.
+        if placement.colSpan >= 2 {
             if data.hasSyncedLyrics {
                 SyncedLyricsList(
                     currentSize: 15 * style.textScale, otherSize: 12 * style.textScale,
@@ -238,6 +296,9 @@ struct PlayerElementView: View {
     @ViewBuilder private var artwork: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
+            // The record is inset by the ring's allowance whether or not the
+            // ring is drawn, so turning it on does not resize the record.
+            let discSide = max(1, side - artworkInset(side: side))
             ZStack {
                 switch placement.artworkStyle.kind {
                 case .vinyl:
@@ -246,6 +307,7 @@ struct PlayerElementView: View {
                     VinylRecordRepresentable(
                         artwork: data.hasTrack ? data.artwork : nil,
                         isPlaying: data.isPlaying, labelFraction: 0.46)
+                        .frame(width: discSide, height: discSide)
                     if placement.artworkStyle.showsStylus { tonearm(side: side) }
                 case .cover:
                     if data.hasTrack {
@@ -274,19 +336,58 @@ struct PlayerElementView: View {
             .contentShape(
                 placement.artworkStyle.kind == .vinyl ? AnyShape(Circle()) : AnyShape(Rectangle())
             )
-            .onTapGesture(perform: actions.playPause)
+            // A SINGLE click opens the full-screen view where there is one.
+            // The artwork used to be the play/pause target — deliberately, as
+            // the largest one — but a click that both expands and toggles
+            // playback cannot be built, so play/pause is the transport button's
+            // job now and every default layout has one.
+            .onTapGesture(perform: actions.expand)
         }
     }
 
+    /// The ring reported as "appears around the vinyl and expands in size".
+    ///
+    /// Both halves of that were real, and neither was an animation:
+    ///
+    /// 1. There was no TRACK circle — only the trimmed progress arc. At 0% that
+    ///    is a single round dot at twelve o'clock which sweeps clockwise and
+    ///    grows into a full circle as the song plays. A ring that appears and
+    ///    expands, literally. `VinylWidgetView`, where this was ported from,
+    ///    drew the unfilled backing circle first.
+    /// 2. It was framed at `side * 1.045`, larger than the `side`-square box the
+    ///    artwork is clipped to, so it overflowed its own cell.
+    ///
+    /// Now the disc is inset by the ring's own width and the ring sits in the
+    /// annulus that frees up, entirely inside `side`.
     private func progressRing(side: CGFloat) -> some View {
-        TimelineView(.periodic(from: Self.scheduleAnchor, by: data.isPlaying ? 0.25 : 60)) { context in
+        let lineWidth = max(2, side * 0.028)
+        // Inset by half a stroke so the stroke's outer edge lands on the box
+        // edge rather than straddling it.
+        let diameter = side - lineWidth
+        return ZStack {
             Circle()
-                .trim(from: 0, to: fraction(at: context.date))
-                .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .foregroundStyle(style.ink.opacity(0.85))
-                .rotationEffect(.degrees(-90))
-                .frame(width: side * 1.045, height: side * 1.045)
+                .stroke(style.ink.opacity(0.18), lineWidth: lineWidth)
+            TimelineView(
+                .periodic(from: Self.scheduleAnchor, by: data.isPlaying ? 0.25 : 60)
+            ) { context in
+                Circle()
+                    .trim(from: 0, to: fraction(at: context.date))
+                    .stroke(
+                        style.progress.opacity(0.9),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
         }
+        .frame(width: diameter, height: diameter)
+    }
+
+    /// How much smaller the artwork itself is when a ring is drawn around it.
+    ///
+    /// Constant whether the ring is ON or OFF for `.vinyl`, so toggling it does
+    /// not resize the record — the ring appears in space that was already
+    /// reserved, instead of the record jumping.
+    private func artworkInset(side: CGFloat) -> CGFloat {
+        placement.artworkStyle.kind == .vinyl ? max(2, side * 0.028) * 2.2 : 0
     }
 
     /// The tonearm, ported from `VinylWidgetView`. It lives here rather than in
@@ -314,7 +415,18 @@ struct PlayerElementView: View {
             }
             .offset(y: pivot * 0.45)
             .rotationEffect(.degrees(data.isPlaying ? 32 : 12), anchor: .top)
-            .animation(.spring(response: 0.75, dampingFraction: 0.82), value: data.isPlaying)
+            // Asymmetric on purpose. The record does not coast to a halt —
+            // `VinylRecordView.stopSpin()` removes the CABasicAnimation and
+            // writes the frozen angle in the same turn — so a 0.75s spring
+            // lifting the arm read as the arm reacting late to a stop that had
+            // already happened. Lifting is quick and barely bouncy; cueing back
+            // down keeps the slower settle, which is how a real arm behaves and
+            // is the direction where the delay looks deliberate.
+            .animation(
+                data.isPlaying
+                    ? .spring(response: 0.55, dampingFraction: 0.78)
+                    : .spring(response: 0.22, dampingFraction: 0.9),
+                value: data.isPlaying)
         }
         .frame(width: pivot, alignment: .top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -368,16 +480,36 @@ struct PlayerElementView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(style.ink.opacity(0.22))
-                    Capsule().fill(style.ink.opacity(0.85))
-                        .frame(width: geo.size.width * fraction(at: context.date))
+                    Capsule().fill(style.progress.opacity(0.9))
+                        .frame(
+                            width: geo.size.width
+                                * (scrubFraction ?? fraction(at: context.date)))
                 }
                 .frame(height: 3)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
-                .onTapGesture { point in
-                    guard data.duration > 0, data.duration.isFinite else { return }
-                    actions.seekTo(data.duration * (point.x / max(1, geo.size.width)))
-                }
+                // `minimumDistance: 0` fires `onChanged` on the initial press,
+                // so this subsumes tap-to-seek — a separate `onTapGesture`
+                // alongside it would compete for the same events and make both
+                // unreliable. Dragging never reached SwiftUI at all before,
+                // because the panel had `isMovableByWindowBackground` on and
+                // AppKit claimed the whole card as drag background.
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard data.duration > 0, data.duration.isFinite else { return }
+                            scrubFraction = min(
+                                max(value.location.x / max(1, geo.size.width), 0), 1)
+                        }
+                        .onEnded { value in
+                            defer { scrubFraction = nil }
+                            guard data.duration > 0, data.duration.isFinite else { return }
+                            let f = min(max(value.location.x / max(1, geo.size.width), 0), 1)
+                            // Committed once, on release. `MusicManager.seek`
+                            // spawns a Task per call, so seeking per mouse-move
+                            // would be a controller round trip every frame.
+                            actions.seekTo(data.duration * f)
+                        })
             }
         }
     }

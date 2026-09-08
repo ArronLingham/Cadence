@@ -65,6 +65,8 @@ struct LauncherPlayerWidget: View {
 
     @Default(.playerLayouts) private var layouts
     @Default(.launcherAlwaysShowsControls) private var alwaysShowsControls
+    @Default(.sliderColor) private var sliderColour
+    @Default(.accentColor) private var accentColour
     @ObservedObject private var music = MusicManager.shared
 
     @State private var isHovering = false
@@ -78,7 +80,8 @@ struct LauncherPlayerWidget: View {
             layout: layout,
             style: .forSurface(
                 .launcher, albumColor: music.avgColor, tinted: false,
-                scale: layout.geometry.contentScale),
+                scale: layout.geometry.contentScale,
+                sliderColor: sliderColour, accentColor: accentColour),
             hovering: showsControls
         )
         .frame(width: size.width, height: height)

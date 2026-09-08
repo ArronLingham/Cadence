@@ -30,6 +30,9 @@ struct PlayerSettingsView: View {
     @Default(.playerTintsWithAlbum) private var tinted
     @Default(.playerBackgroundOpacity) private var opacity
     @Default(.hoverGrowsWidget) private var hoverGrows
+    @Default(.playerFollowsSpaces) private var followsSpaces
+    @Default(.volumeControlsApp) private var volumeControlsApp
+    @Default(.playerUsesGlass) private var usesGlass
     @Default(.enableLockScreenWidget) private var lockEnabled
     @Default(.lockWidgetWidth) private var lockWidth
     @Default(.lockFullBackground) private var lockBackground
@@ -45,7 +48,6 @@ struct PlayerSettingsView: View {
     @Default(.lyricsOffsetSeconds) private var lyricsOffset
     @Default(.lyricsTranslationEnabled) private var translateLyrics
     @Default(.musicSkipBehavior) private var skipBehavior
-    @Default(.spotifySPDCCookie) private var spotifyCookie
     @Default(.lyricsVisibleLines) private var lyricLines
     @Default(.colorExtractionMode) private var colourMode
     @Default(.sliderColor) private var sliderColour
@@ -75,6 +77,7 @@ struct PlayerSettingsView: View {
                 Picker("Position", selection: $windowLevel) {
                     ForEach(PlayerWindowLevel.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
+                Toggle("Liquid glass background", isOn: $usesGlass)
                 Toggle("Tint with the album colour", isOn: $tinted)
                 Picker("Colour taken from the artwork by", selection: $colourMode) {
                     Text("Average").tag(ColorExtractionMode.legacy)
@@ -88,6 +91,9 @@ struct PlayerSettingsView: View {
                     Slider(value: $opacity, in: 0...1)
                     Text("\(Int(opacity * 100))%").monospacedDigit().frame(width: 42)
                 }
+                Toggle("Follow me between desktops", isOn: $followsSpaces)
+                Text("Off: the player stays on the desktop you put it on. On: it appears on all of them.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Grow on hover", isOn: $hoverGrows)
                 Text("When off, anything you mark as hover-only has to fit in the size it already is.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -103,8 +109,11 @@ struct PlayerSettingsView: View {
                     Text("\(Int(lockWidth))").monospacedDigit().frame(width: 42)
                 }
                 HStack {
+                    // -600 rather than -240: 240 could not clear the login
+                    // field on a Retina display, which is exactly where the
+                    // widget needs to go to sit below it.
                     Text("Vertical offset")
-                    Slider(value: $lockOffset, in: -240...240)
+                    Slider(value: $lockOffset, in: -600...600)
                     Text("\(Int(lockOffset))").monospacedDigit().frame(width: 42)
                 }
                 Toggle("Use Spotify Canvas video when there is one", isOn: $canvasVideo)
@@ -118,6 +127,9 @@ struct PlayerSettingsView: View {
                     ForEach(MusicSkipBehavior.allCases) { Text($0.displayName).tag($0) }
                 }
                 Stepper("Visualiser bars: \(visualizerBars)", value: $visualizerBars, in: 2...12)
+                Toggle("Volume slider controls the app, not the Mac", isOn: $volumeControlsApp)
+                Text("Sets Spotify's or Music's own volume. Sources with no scriptable volume fall back to the system slider.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Colour the visualiser from the album", isOn: $colouredSpectrogram)
                 Toggle("Real-time waveform", isOn: $realTimeWaveform)
                 Text("Reads system audio through a CoreAudio tap, and only while a visualiser is on screen.")
@@ -147,11 +159,14 @@ struct PlayerSettingsView: View {
                 }
                 Text("Now Playing covers every app but needs a system API Apple removed in macOS 15.4.")
                     .font(.caption).foregroundStyle(.secondary)
-                if source == .spotify {
-                    SecureField("Spotify sp_dc cookie", text: $spotifyCookie)
-                    Text("Optional. Only needed for lyrics and Canvas artwork; playback works without it. A SecureField because this is a credential.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+            }
+
+            // The cookie's whole UI — sign-in sheet, status, validate, clear —
+            // lives in its own section. Anchor kept it separate for the same
+            // reason: it is the one control here that talks to the network and
+            // can fail, so it needs status and error rows the others do not.
+            if source == .spotify {
+                SpotifyAuthSettingsSection()
             }
         }
         .formStyle(.grouped)

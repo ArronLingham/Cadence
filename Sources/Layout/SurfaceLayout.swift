@@ -36,6 +36,10 @@ public enum PlayerSurface: String, CaseIterable, Codable, Sendable {
     case lockWidget
     /// The lock-screen full-screen player.
     case lockFull
+    /// The desktop player's own full-screen view, opened by clicking its
+    /// artwork. A fifth surface with its own layout — sharing `lockFull`'s
+    /// would violate the rule these surfaces exist to enforce.
+    case desktopFull
     /// The now-playing card in Anchor's launcher. Built here, wired up at
     /// Anchor integration — Cadence has no launcher of its own.
     case launcher
@@ -45,6 +49,7 @@ public enum PlayerSurface: String, CaseIterable, Codable, Sendable {
         case .desktop: return String(localized: "Desktop player")
         case .lockWidget: return String(localized: "Lock screen widget")
         case .lockFull: return String(localized: "Lock screen full screen")
+        case .desktopFull: return String(localized: "Desktop full screen")
         case .launcher: return String(localized: "Launcher widget")
         }
     }
@@ -80,6 +85,14 @@ public struct ElementPlacement: Codable, Hashable, Identifiable, Sendable {
     public var col: Int
     public var row: Int
     public var colSpan: Int
+
+    /// How many grid rows this placement occupies.
+    ///
+    /// Added because the full-screen player has to put lyrics beside a stack of
+    /// artwork and transport, and a one-row element cannot do that. `rowSpan`
+    /// was described in this project's own notes for a long time before any
+    /// code implemented it — it existed only in comments.
+    public var rowSpan: Int
     public var layer: ElementLayer
     public var visibility: ElementVisibility
 
@@ -97,6 +110,7 @@ public struct ElementPlacement: Codable, Hashable, Identifiable, Sendable {
         col: Int,
         row: Int,
         colSpan: Int = 1,
+        rowSpan: Int = 1,
         layer: ElementLayer = .base,
         visibility: ElementVisibility = .always,
         priority: Int = 0,
@@ -107,6 +121,7 @@ public struct ElementPlacement: Codable, Hashable, Identifiable, Sendable {
         self.col = col
         self.row = row
         self.colSpan = colSpan
+        self.rowSpan = max(1, rowSpan)
         self.layer = layer
         self.visibility = visibility
         self.priority = priority
@@ -115,6 +130,10 @@ public struct ElementPlacement: Codable, Hashable, Identifiable, Sendable {
 
     /// Columns this placement occupies, as a half-open range.
     public var columns: Range<Int> { col..<(col + colSpan) }
+
+    /// Rows this placement occupies, as a half-open range. `rowSpan` is clamped
+    /// to at least 1 on the way in, so this is never empty.
+    public var rows: Range<Int> { row..<(row + max(1, rowSpan)) }
 
     /// Decoding tolerates a placement written by a future version that has since
     /// gained fields, and an `id` that predates it being stored.
@@ -125,6 +144,9 @@ public struct ElementPlacement: Codable, Hashable, Identifiable, Sendable {
         col = try c.decode(Int.self, forKey: .col)
         row = try c.decode(Int.self, forKey: .row)
         colSpan = try c.decodeIfPresent(Int.self, forKey: .colSpan) ?? 1
+        // Absent in every layout written before row spanning existed, which is
+        // all of them — so a missing value must mean 1, not a decode failure.
+        rowSpan = max(1, try c.decodeIfPresent(Int.self, forKey: .rowSpan) ?? 1)
         layer = try c.decodeIfPresent(ElementLayer.self, forKey: .layer) ?? .base
         visibility = try c.decodeIfPresent(ElementVisibility.self, forKey: .visibility) ?? .always
         priority = try c.decodeIfPresent(Int.self, forKey: .priority) ?? 0
@@ -204,6 +226,7 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
     public var desktop: SurfaceLayout
     public var lockWidget: SurfaceLayout
     public var lockFull: SurfaceLayout
+    public var desktopFull: SurfaceLayout
     public var launcher: SurfaceLayout
 
     public subscript(surface: PlayerSurface) -> SurfaceLayout {
@@ -212,6 +235,7 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
             case .desktop: return desktop
             case .lockWidget: return lockWidget
             case .lockFull: return lockFull
+            case .desktopFull: return desktopFull
             case .launcher: return launcher
             }
         }
@@ -220,6 +244,7 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
             case .desktop: desktop = newValue
             case .lockWidget: lockWidget = newValue
             case .lockFull: lockFull = newValue
+            case .desktopFull: desktopFull = newValue
             case .launcher: launcher = newValue
             }
         }
@@ -234,16 +259,21 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
         desktop = try c.decodeIfPresent(SurfaceLayout.self, forKey: .desktop) ?? d.desktop
         lockWidget = try c.decodeIfPresent(SurfaceLayout.self, forKey: .lockWidget) ?? d.lockWidget
         lockFull = try c.decodeIfPresent(SurfaceLayout.self, forKey: .lockFull) ?? d.lockFull
+        // Absent from every layout stored before this surface existed, which is
+        // exactly the case the fallback above was written for.
+        desktopFull =
+            try c.decodeIfPresent(SurfaceLayout.self, forKey: .desktopFull) ?? d.desktopFull
         launcher = try c.decodeIfPresent(SurfaceLayout.self, forKey: .launcher) ?? d.launcher
     }
 
     public init(
         desktop: SurfaceLayout, lockWidget: SurfaceLayout,
-        lockFull: SurfaceLayout, launcher: SurfaceLayout
+        lockFull: SurfaceLayout, desktopFull: SurfaceLayout, launcher: SurfaceLayout
     ) {
         self.desktop = desktop
         self.lockWidget = lockWidget
         self.lockFull = lockFull
+        self.desktopFull = desktopFull
         self.launcher = launcher
     }
 }

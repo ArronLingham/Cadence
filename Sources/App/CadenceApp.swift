@@ -72,6 +72,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for a menu-bar app, and the reason Cadence has no Dock icon by
         // default. It is a setting now rather than a hardcoded policy.
         applyActivationPolicy()
+        // Before any surface is built, so nothing renders the old arrangement
+        // first and then jumps.
+        let migration = Defaults[.layoutMigration]
+        if migration < PlayerLayouts.currentMigration {
+            Defaults[.playerLayouts] = PlayerLayouts.migrated(
+                Defaults[.playerLayouts], from: migration)
+            Defaults[.layoutMigration] = PlayerLayouts.currentMigration
+        }
         Defaults.publisher(.showInDock, options: [])
             .sink { _ in
                 MainActor.assumeIsolated { AppDelegate.applyActivationPolicy() }
@@ -100,7 +108,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
-        let nowPlaying = NSMenuItem(title: "Nothing playing", action: nil, keyEquivalent: "")
+        // A real action, so AppKit does not grey it out. `autoenablesItems`
+        // disables anything with no action and draws it in the disabled label
+        // colour — that grey was not styling, it was the item being dead, and
+        // the row could not be clicked because there was nothing to click.
+        let nowPlaying = NSMenuItem(
+            title: "Nothing playing", action: #selector(openPlayer), keyEquivalent: "")
+        nowPlaying.target = self
         nowPlaying.tag = Self.nowPlayingTag
         menu.addItem(nowPlaying)
         menu.addItem(.separator())
@@ -115,6 +129,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static let nowPlayingTag = 1
+
+    /// Clicking the now-playing row opens the full-screen player, which is the
+    /// obvious thing for a row showing the current track to do.
+    @objc private func openPlayer() {
+        MainActor.assumeIsolated { DesktopFullScreenController.shared.open() }
+    }
 
     @objc private func openSettings() {
         // AppKit sends menu actions on the main thread.
@@ -138,9 +158,29 @@ extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         guard let item = menu.item(withTag: Self.nowPlayingTag) else { return }
         let music = MusicManager.shared
-        item.title = music.hasTrack
-            ? "\(music.songTitle) — \(music.artistName)"
-            : "Nothing playing"
+        // Two lines with artwork, drawn by AppKit. `subtitle` and `image` are
+        // macOS 14+, and this project's floor is 26, so they are available
+        // unconditionally — and AppKit handles vibrancy, highlighting, Reduce
+        // Transparency and dark mode, none of which a custom NSView would get.
+        if music.hasTrack {
+            item.title = music.songTitle
+            item.subtitle = music.artistName.isEmpty ? nil : music.artistName
+            let art = music.albumArt
+            let thumb = NSImage(size: NSSize(width: 28, height: 28), flipped: false) { rect in
+                NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).addClip()
+                art.draw(in: rect)
+                return true
+            }
+            item.image = thumb
+            item.isEnabled = true
+        } else {
+            item.title = "Nothing playing"
+            item.subtitle = nil
+            item.image = nil
+            // Nothing to open, so it is honestly disabled rather than a live
+            // control that does nothing.
+            item.isEnabled = false
+        }
     }
 }
 

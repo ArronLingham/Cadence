@@ -65,6 +65,34 @@ extension Defaults.Keys {
     /// simply has to fit in the resting frame.
     static let hoverGrowsWidget = Key<Bool>("hoverGrowsWidget", default: true)
 
+    /// Whether the desktop player follows you between Spaces.
+    ///
+    /// Off by default: the panel used to be unconditionally `.canJoinAllSpaces`,
+    /// so it appeared on every desktop whether or not that was wanted. macOS
+    /// has no per-window user-facing control for a borderless panel, so this is
+    /// the switch.
+    static let playerFollowsSpaces = Key<Bool>("playerFollowsSpaces", default: false)
+
+    /// Whether the Volume element drives the PLAYER's own volume rather than
+    /// the Mac's. Off keeps the previous behaviour (system output volume).
+    static let volumeControlsApp = Key<Bool>("volumeControlsApp", default: false)
+
+    /// Desktop player background: a tinted card, or liquid glass.
+    ///
+    /// Glass was reachable only on the lock screen, even though the same
+    /// `glassEffect` call works anywhere and it is the reason the deployment
+    /// target is macOS 26.
+    static let playerUsesGlass = Key<Bool>("playerUsesGlass", default: false)
+
+    /// Which one-time layout migrations have run.
+    ///
+    /// A shipped default only applies to someone who has never saved a layout.
+    /// Everyone else keeps what is in their plist — which is right for an
+    /// arrangement they built, and wrong for a default that was broken, since
+    /// the fix would be code nobody can reach. This is how a fixed default
+    /// reaches an existing install.
+    static let layoutMigration = Key<Int>("layoutMigration", default: 0)
+
     /// Show Cadence in the Dock and the ⌘Tab switcher.
     ///
     /// Off by default because a menu-bar music player that occupies a Dock slot
