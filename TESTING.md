@@ -365,8 +365,21 @@ too.
 | Release, idle, 19 min uptime, shipped defaults | 0.01% | 0.00% | 0.00% | 0.48% | 12.5 MB |
 | Release, same, after the review fixes | 0.03% | 0.00% | 0.00% | 0.95% | 13.2 MB |
 | Release, all fixes + memoisation | 0.01% | 0.00% | 0.00% | 0.47% | 16.2 MB |
+| Release, after the 30-defect pass, settled 20 min | 0.03% | 0.00% | 0.00% | 0.96% | 16.2 MB |
 
-86-87 samples each, all after a 13+ minute settle. **All three rows are the same
+The last row is 144 samples over 300s at 20 minutes of uptime; the others are
+86-87 samples each. All after a 13+ minute settle.
+
+**The last row is the same number as the row above it.** Seven commits, about
+twenty files, a fifth surface, row spanning in the solver and several new
+observers, and RSS came back at 16.2 MB to the decimal. Every median and p90 is
+still 0.00, so the mean differences are noise by this file's own rule.
+
+A first attempt at that row read 30.4 MB mean and looked like a 2x regression.
+It was measured from 8 seconds after launch, so it averaged the entire settling
+curve — the script warns about exactly this and the warning was in the output.
+Re-measured at 20 minutes it is 16.2 MB. **Do not compare a figure that includes
+launch against one that does not.** **All three rows are the same
 number.** Every median and p90 is 0.00, so each mean is carried entirely by a
 noisy tail, and this project's own rule is not to read a change of less than
 roughly 2x as signal. The RSS spread (12.5 / 13.2 / 16.2 MB) is the same story
