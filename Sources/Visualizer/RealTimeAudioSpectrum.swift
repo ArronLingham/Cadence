@@ -108,10 +108,26 @@ class RealTimeAudioSpectrum: NSView {
         CATransaction.setDisableActions(true)
         setupBars()
         CATransaction.commit()
+        appliedBarCount = max(1, Defaults[.visualizerBarCount])
+        appliedColour = barColor
     }
 
-    /// Called when `visualizerBarCount` or `coloredSpectrogram` changes.
+    /// Rebuild only when the appearance actually changed.
+    ///
+    /// `updateNSView` runs on every SwiftUI update of the wrapper — including
+    /// every play/pause, since `isPlaying` is a binding on it. Rebuilding every
+    /// CAShapeLayer and NSBezierPath on each of those is pure waste: the guard
+    /// turns a per-update teardown into one that fires only when the stepper or
+    /// the toggle moves.
+    private var appliedBarCount = 0
+    private var appliedColour: NSColor?
+
     func refreshAppearance() {
+        let wantedCount = max(1, Defaults[.visualizerBarCount])
+        let wantedColour = barColor
+        guard wantedCount != appliedBarCount || wantedColour != appliedColour else { return }
+        appliedBarCount = wantedCount
+        appliedColour = wantedColour
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         setupBars()

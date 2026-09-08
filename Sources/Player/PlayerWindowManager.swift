@@ -62,11 +62,22 @@ final class PlayerWindowManager: ObservableObject {
                 Task { @MainActor in self?.panel?.applySpaceBehaviour() }
             }
             .store(in: &cancellables)
-        // The budget is written by the resize drag and cleared by Reset in the
-        // editor, which is a different window — without this the card keeps the
-        // old height until something else happens to relayout it.
+        // The budget is written by Reset in the editor, which is a different
+        // window — without this the card keeps the old height until something
+        // else happens to relayout it.
+        //
+        // Skipped while resizing, and that guard is load-bearing rather than
+        // defensive: `applyUserSize` writes this key on EVERY step of a resize
+        // drag, so without it each step did two relayouts instead of one, the
+        // second of them animated — an animation started sixty times a second
+        // that also fights the pointer it is chasing.
         Defaults.publisher(.playerHeightBudget, options: [])
-            .sink { [weak self] _ in Task { @MainActor in self?.relayout(animated: true) } }
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, !(self.panel?.isResizing ?? false) else { return }
+                    self.relayout(animated: true)
+                }
+            }
             .store(in: &cancellables)
         Defaults.publisher(.playerLayouts, options: [])
             .sink { [weak self] _ in
