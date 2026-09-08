@@ -6,7 +6,7 @@ that is how Anchor's checklist grew to 770 lines of archaeology.
 
 ## Already proven, do not re-test by hand
 
-`tests/run_gridsolver_tests.sh` — **70 assertions**, compiling the real
+`tests/run_gridsolver_tests.sh` — **143 assertions**, compiling the real
 `Sources/Layout/*.swift`. Covers the four shipped defaults as data (no
 overlapping bases, contiguous rows, nothing overflowing the grid, every span
 meets `minSpan`, a priority-0 element exists, no orphaned overlays), overlap
@@ -125,6 +125,28 @@ Worth checking by hand:
 - **Reset this surface** returns exactly the shipped default.
 - **Switch surfaces and come back.** Each of the four is independent; a change
   to one must never move an element on another.
+
+## The first real playback pass
+
+Run 2026-09-07, against Spotify, by hand. **68 of 104 checks passed and about
+thirty defects came out of it** — the single most productive hour this project
+has had, and the direct answer to the line that stood at the top of this file
+for weeks: nothing here had ever seen a real track.
+
+The defects clustered, and the clusters are the lesson:
+
+- **The window ate the pointer.** `isMovableByWindowBackground` armed an AppKit
+  drag before SwiftUI saw the event, so the scrubber could not scrub; and the
+  scrubber had no drag handler at all, only a tap. There were five resize
+  handles, not eight, inside a 6pt band thinner than the card's own padding.
+- **Settings that were read but never applied.** Four of them. The reachability
+  audit passed every one, because "some file reads this key" was its whole test.
+  `scripts/audit-inert-settings.sh` exists now for that shape.
+- **The engine could not say what the surfaces needed.** `rowSpan` was described
+  in CLAUDE.md and in four comments and implemented nowhere, so the full-screen
+  player could not put lyrics beside artwork.
+- **A fixed default did not reach the machine it was written for**, because a
+  stored layout overrode it. Unreachable data, not unreachable code.
 
 ## What only a person can check
 

@@ -166,9 +166,14 @@ with the window. Exact x/y positions collide the first time the widget is
 resized, and the user would then be re-fixing the layout at every size. The grid
 buys real positioning without that failure.
 
-`ElementMetrics` per case: `minSpan`, `preferredSpan`, `rowSpan`,
-`growsHorizontally` (text and progress absorb spare width), `isInteractive`
-(excluded from double-click-to-send-back hit testing).
+`ElementMetrics` per case: `minSpan`, `preferredSpan`, `growsHorizontally`
+(text and progress absorb spare width), `isInteractive` (excluded from
+double-click-to-send-back hit testing).
+
+`rowSpan` is on the **placement**, not the metrics — it is a choice the user
+makes per surface, not a property of the element. It was described in this file
+for a long time while existing only in comments; it is real now, and the
+full-screen player's two-column shape is what it was added for.
 
 ### Priority: what disappears as it shrinks
 
@@ -215,8 +220,18 @@ being asked.
 ### Storage
 
 ```swift
-Key<PlayerLayouts>("playerLayouts")     // one key, four independent layouts
+Key<PlayerLayouts>("playerLayouts")     // one key, five independent layouts
 ```
+
+Five, not four: the desktop player gained its own full-screen surface
+(`desktopFull`), opened by clicking its artwork. It has its own layout rather
+than sharing the lock screen's, because sharing one is precisely the mistake
+this rule exists to prevent.
+
+A corrected default does not reach anyone who has already saved a layout —
+their stored value wins. `PlayerLayouts.migrated` is the versioned, one-time
+way a fixed default lands on an existing install; it is pure, and the caller
+owns the version key, because `Sources/Layout` must not import `Defaults`.
 
 One atomic write, one migration, and it is structurally impossible for two
 surfaces to end up sharing a layout by accident. Each ships a default built from
@@ -370,12 +385,24 @@ files.
   (190→560pt) near a screen edge pushed a borderless panel off screen, and one
   you cannot see is one you cannot drag back. Mouse resize must apply the same
   clamp.
-- **`vinylBackgroundOpacity` is currently dead.** `VinylWidgetView.swift:240`
-  reads `.opacity(cond ? 1 : 1)` — both branches identical — so the slider and
-  the five-step context menu do nothing. Fix when that view is converted.
+- **`vinylBackgroundOpacity` is dead, and stays dead deliberately.**
+  `Reference/VinylWidgetView.swift:240` reads `.opacity(cond ? 1 : 1)` — both
+  branches identical. That file is in `Reference/`, not the target, and the key
+  is not in `MusicDefaults`, so nothing reachable exposes it. Nothing to fix.
 - **`MusicManager` still calls `AnchorViewCoordinator` at :1199-1201.** Two
   sneak-peek lines into Anchor's notch, which does not exist here. **Done** —
   it posts `.cadenceTrackDidChange` instead, and nothing observes that yet.
+
+- **A fixed default does not reach an install that already has data.** The
+  full-screen layout was rebuilt, tested and shipped, and changed nothing on
+  the one machine it was written for, because a stored `playerLayouts` overrode
+  it. Unreachable *data* is the same failure as unreachable code and it does not
+  show up in a diff. Check what is in the plist, not just what is in the source.
+
+- **`strings` cannot verify a Swift literal.** Swift stores strings of 15 UTF-8
+  bytes or fewer inline, so `strings` on a Release binary reports "Presets",
+  "Cadence Player" and "Nothing playing" as absent while they are all present.
+  Verify shipped code by symbol (`nm`), or by running it.
 
 ### And the meta-lesson from Anchor, which applies to every feature here
 
@@ -403,7 +430,8 @@ check that was provably dead, twice.
 | 3 — desktop player | **done**; renders, resizes, hovers, sends to back |
 | 4 — lock screen | **built**; both surfaces render. Unverified above a *real* lock screen |
 | 5 — launcher widget | **built**, not reachable until Anchor integration |
-| Layout editor | **done**; drag-to-arrange with a live preview |
+| Layout editor | **done**; drag-to-arrange, inter-row insertion, multi-select, presets |
+| 6 — first real playback pass | **done**; ~30 defects found and fixed |
 
 `TESTING.md` records what is proven and what still needs a person. The headline
 gap: **nothing here has yet seen a real track** — every check so far ran with
@@ -424,7 +452,7 @@ could not fail.
 
 | | |
 |---|---|
-| `tests/run_gridsolver_tests.sh` | **93 assertions**, compiling the real `Sources/Layout/*.swift` |
+| `tests/run_gridsolver_tests.sh` | **143 assertions**, compiling the real `Sources/Layout/*.swift` |
 | `tests/run_runtime_stress.sh` | **live** — hostile settings and malformed layouts against the running app |
 | `scripts/audit-reachability.sh` | dead switches, unreachable settings, orphaned notifications, undrawn elements |
 | `scripts/check-debug-hooks.sh` | asserts `CADENCE_*` is absent from Release **and present in Debug** |
