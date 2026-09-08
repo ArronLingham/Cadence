@@ -45,6 +45,12 @@ for key in $keys; do
             # Written by the editor or by dragging, not by a control.
             playerLayouts|playerWidth|playerHeightBudget)
                 ;;
+            # A schema version, not a preference. It records which one-time
+            # layout migrations have run; a control that let the user set it
+            # would only let them re-run or skip a migration, both of which are
+            # ways to corrupt their own layouts.
+            layoutMigration)
+                ;;
             # The launcher card is not reachable until Anchor integration, so
             # its two keys legitimately have no UI yet. Revisit at integration.
             launcherWidgetSize|launcherAlwaysShowsControls)

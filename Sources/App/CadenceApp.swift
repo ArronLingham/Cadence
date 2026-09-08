@@ -72,6 +72,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for a menu-bar app, and the reason Cadence has no Dock icon by
         // default. It is a setting now rather than a hardcoded policy.
         applyActivationPolicy()
+        // Before any surface is built, so nothing renders the old arrangement
+        // first and then jumps.
+        let migration = Defaults[.layoutMigration]
+        if migration < PlayerLayouts.currentMigration {
+            Defaults[.playerLayouts] = PlayerLayouts.migrated(
+                Defaults[.playerLayouts], from: migration)
+            Defaults[.layoutMigration] = PlayerLayouts.currentMigration
+        }
         Defaults.publisher(.showInDock, options: [])
             .sink { _ in
                 MainActor.assumeIsolated { AppDelegate.applyActivationPolicy() }

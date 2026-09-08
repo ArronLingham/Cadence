@@ -568,6 +568,37 @@ ok("default ids are unique within a surface",
 // ---------------------------------------------------------------------------
 print("")
 
+print("Migration")
+
+// A migration that does not preserve the user's own work is worse than no
+// migration. This checks the shape: the widget keeps its placements and gains
+// only the geometry flag; the full-screen surface is replaced.
+var preMigration = PlayerLayouts.defaults
+preMigration.lockWidget.geometry.centersContent = false
+preMigration.lockWidget.placements = [
+    ElementPlacement(element: .clock, col: 0, row: 0, colSpan: 2, priority: 0)
+]
+preMigration.desktop.placements = [
+    ElementPlacement(element: .timer, col: 0, row: 0, colSpan: 2, priority: 0)
+]
+let after = PlayerLayouts.migrated(preMigration, from: 0)
+ok("migration centres the lock widget",
+   after.lockWidget.geometry.centersContent)
+ok("migration keeps the user's lock-widget placements",
+   after.lockWidget.placements.map(\.element) == [.clock])
+ok("migration does not touch the desktop layout",
+   after.desktop.placements.map(\.element) == [.timer])
+ok("migration replaces the full-screen layout",
+   after.lockFull == SurfaceLayout.defaultLockFull)
+// Running twice must be a no-op, or every launch overwrites a surface the
+// user has since rearranged.
+var alreadyMigrated: PlayerLayouts = after
+alreadyMigrated.lockFull = SurfaceLayout(
+    geometry: GridGeometry(columns: 12), placements: [])
+ok("migration runs once, not on every launch",
+   PlayerLayouts.migrated(alreadyMigrated, from: PlayerLayouts.currentMigration)
+       .lockFull.placements.isEmpty)
+
 print("Presets")
 
 // Presets are layout DATA, and data can be wrong in exactly the ways the

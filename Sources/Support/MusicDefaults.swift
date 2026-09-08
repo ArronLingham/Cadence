@@ -84,6 +84,15 @@ extension Defaults.Keys {
     /// target is macOS 26.
     static let playerUsesGlass = Key<Bool>("playerUsesGlass", default: false)
 
+    /// Which one-time layout migrations have run.
+    ///
+    /// A shipped default only applies to someone who has never saved a layout.
+    /// Everyone else keeps what is in their plist — which is right for an
+    /// arrangement they built, and wrong for a default that was broken, since
+    /// the fix would be code nobody can reach. This is how a fixed default
+    /// reaches an existing install.
+    static let layoutMigration = Key<Int>("layoutMigration", default: 0)
+
     /// Show Cadence in the Dock and the ⌘Tab switcher.
     ///
     /// Off by default because a menu-bar music player that occupies a Dock slot

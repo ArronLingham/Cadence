@@ -523,3 +523,38 @@ public struct LayoutPreset: Identifiable, Sendable {
                 ElementPlacement(element: .timeRemaining, col: 5, row: 4, colSpan: 1, priority: 5),
             ]))
 }
+
+// MARK: - Migration
+
+extension PlayerLayouts {
+    /// The latest migration number. Bump when a shipped default is corrected in
+    /// a way existing installs must receive.
+    static let currentMigration = 1
+
+    /// Bring a stored set of layouts up to date, once.
+    ///
+    /// Migration 1 fixes two defaults that were wrong rather than merely
+    /// different, and which a stored layout would otherwise mask forever:
+    ///
+    /// - `lockFull` put artwork and lyrics side by side in row 0 and then ran
+    ///   title, artist and transport across all twelve columns beneath BOTH, so
+    ///   the lyrics column was one row tall with a text block cutting through
+    ///   it. It is rebuilt around `rowSpan` as two halves.
+    /// - `lockWidget` never set `centersContent`, so its arrangement sat against
+    ///   the leading edge with all the slack on one side.
+    ///
+    /// The widget keeps every placement the user made — only the geometry flag
+    /// changes. The full-screen layout is replaced outright, because it is the
+    /// surface whose arrangement was the defect.
+    /// Pure: the stored version comes IN and the caller writes the new one back.
+    /// `Sources/Layout` deliberately imports neither SwiftUI nor Defaults, which
+    /// is what lets the shell harness compile it directly — putting a
+    /// `Defaults` read here breaks the whole test suite's build.
+    static func migrated(_ stored: PlayerLayouts, from version: Int) -> PlayerLayouts {
+        guard version < currentMigration else { return stored }
+        var updated = stored
+        updated.lockFull = .defaultLockFull
+        updated.lockWidget.geometry.centersContent = true
+        return updated
+    }
+}
