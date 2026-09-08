@@ -419,6 +419,26 @@ struct LayoutEditorView: View {
                             style: StrokeStyle(
                                 lineWidth: 1.5, dash: isHidden && !isSelected ? [3, 3] : []))
                 )
+                // A hover-only element draws NOTHING when the hover preview is
+                // off, so its dashed box was an empty rectangle and the only
+                // way to find out what was in it was to toggle the preview and
+                // watch the whole surface move. Naming it in place means you
+                // can read the arrangement without disturbing it.
+                .overlay(
+                    Group {
+                        if isHidden {
+                            VStack(spacing: 2) {
+                                Image(systemName: element.placement.element.paletteSymbol)
+                                    .font(.system(size: 10))
+                                Text(element.placement.element.paletteLabel)
+                                    .font(.system(size: 8))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(Color.accentColor.opacity(0.75))
+                            .padding(2)
+                        }
+                    }
+                )
                 .frame(width: element.frame.width, height: element.frame.height)
                 .offset(x: element.frame.minX, y: element.frame.minY)
                 .onTapGesture {

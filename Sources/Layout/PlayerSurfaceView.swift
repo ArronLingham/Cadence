@@ -296,6 +296,9 @@ struct PlayerElementView: View {
     @ViewBuilder private var artwork: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
+            // The record is inset by the ring's allowance whether or not the
+            // ring is drawn, so turning it on does not resize the record.
+            let discSide = max(1, side - artworkInset(side: side))
             ZStack {
                 switch placement.artworkStyle.kind {
                 case .vinyl:
@@ -304,6 +307,7 @@ struct PlayerElementView: View {
                     VinylRecordRepresentable(
                         artwork: data.hasTrack ? data.artwork : nil,
                         isPlaying: data.isPlaying, labelFraction: 0.46)
+                        .frame(width: discSide, height: discSide)
                     if placement.artworkStyle.showsStylus { tonearm(side: side) }
                 case .cover:
                     if data.hasTrack {
@@ -341,15 +345,49 @@ struct PlayerElementView: View {
         }
     }
 
+    /// The ring reported as "appears around the vinyl and expands in size".
+    ///
+    /// Both halves of that were real, and neither was an animation:
+    ///
+    /// 1. There was no TRACK circle — only the trimmed progress arc. At 0% that
+    ///    is a single round dot at twelve o'clock which sweeps clockwise and
+    ///    grows into a full circle as the song plays. A ring that appears and
+    ///    expands, literally. `VinylWidgetView`, where this was ported from,
+    ///    drew the unfilled backing circle first.
+    /// 2. It was framed at `side * 1.045`, larger than the `side`-square box the
+    ///    artwork is clipped to, so it overflowed its own cell.
+    ///
+    /// Now the disc is inset by the ring's own width and the ring sits in the
+    /// annulus that frees up, entirely inside `side`.
     private func progressRing(side: CGFloat) -> some View {
-        TimelineView(.periodic(from: Self.scheduleAnchor, by: data.isPlaying ? 0.25 : 60)) { context in
+        let lineWidth = max(2, side * 0.028)
+        // Inset by half a stroke so the stroke's outer edge lands on the box
+        // edge rather than straddling it.
+        let diameter = side - lineWidth
+        return ZStack {
             Circle()
-                .trim(from: 0, to: fraction(at: context.date))
-                .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .foregroundStyle(style.progress.opacity(0.9))
-                .rotationEffect(.degrees(-90))
-                .frame(width: side * 1.045, height: side * 1.045)
+                .stroke(style.ink.opacity(0.18), lineWidth: lineWidth)
+            TimelineView(
+                .periodic(from: Self.scheduleAnchor, by: data.isPlaying ? 0.25 : 60)
+            ) { context in
+                Circle()
+                    .trim(from: 0, to: fraction(at: context.date))
+                    .stroke(
+                        style.progress.opacity(0.9),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
         }
+        .frame(width: diameter, height: diameter)
+    }
+
+    /// How much smaller the artwork itself is when a ring is drawn around it.
+    ///
+    /// Constant whether the ring is ON or OFF for `.vinyl`, so toggling it does
+    /// not resize the record — the ring appears in space that was already
+    /// reserved, instead of the record jumping.
+    private func artworkInset(side: CGFloat) -> CGFloat {
+        placement.artworkStyle.kind == .vinyl ? max(2, side * 0.028) * 2.2 : 0
     }
 
     /// The tonearm, ported from `VinylWidgetView`. It lives here rather than in
