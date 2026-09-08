@@ -429,6 +429,7 @@ could not fail.
 | `scripts/audit-reachability.sh` | dead switches, unreachable settings, orphaned notifications, undrawn elements |
 | `scripts/check-debug-hooks.sh` | asserts `CADENCE_*` is absent from Release **and present in Debug** |
 | `scripts/audit-main-actor.sh` | a `@Published` written from a bare `Task {}` — the shape that deadlocked the app on 2026-09-07 |
+| `scripts/audit-inert-settings.sh` | a setting named after a thing on screen that the code drawing it never reads |
 | `scripts/measure.sh` | CPU and RSS |
 
 Run the reachability audit after adding a setting, an element or a notification.

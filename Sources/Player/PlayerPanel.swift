@@ -140,7 +140,12 @@ final class PlayerPanel: NSPanel {
     /// which is the same annoyance in a different coat. Neither, plus
     /// `.stationary`, leaves it on the desktop it was placed on.
     func applySpaceBehaviour() {
-        var behaviour: NSWindow.CollectionBehavior = [.fullScreenAuxiliary, .ignoresCycle]
+        // `.ignoresCycle` keeps a menu-bar widget out of ⌘` and the Window
+        // menu, which is right when there is no Dock icon. With one, the user
+        // expects the app to have windows — Settings and the player — so it
+        // joins the cycle instead of being invisible to it.
+        var behaviour: NSWindow.CollectionBehavior = [.fullScreenAuxiliary]
+        if !Defaults[.showInDock] { behaviour.insert(.ignoresCycle) }
         if Defaults[.playerFollowsSpaces] {
             behaviour.insert(.canJoinAllSpaces)
         } else {

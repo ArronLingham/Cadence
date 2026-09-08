@@ -36,6 +36,10 @@ public enum PlayerSurface: String, CaseIterable, Codable, Sendable {
     case lockWidget
     /// The lock-screen full-screen player.
     case lockFull
+    /// The desktop player's own full-screen view, opened by clicking its
+    /// artwork. A fifth surface with its own layout — sharing `lockFull`'s
+    /// would violate the rule these surfaces exist to enforce.
+    case desktopFull
     /// The now-playing card in Anchor's launcher. Built here, wired up at
     /// Anchor integration — Cadence has no launcher of its own.
     case launcher
@@ -45,6 +49,7 @@ public enum PlayerSurface: String, CaseIterable, Codable, Sendable {
         case .desktop: return String(localized: "Desktop player")
         case .lockWidget: return String(localized: "Lock screen widget")
         case .lockFull: return String(localized: "Lock screen full screen")
+        case .desktopFull: return String(localized: "Desktop full screen")
         case .launcher: return String(localized: "Launcher widget")
         }
     }
@@ -221,6 +226,7 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
     public var desktop: SurfaceLayout
     public var lockWidget: SurfaceLayout
     public var lockFull: SurfaceLayout
+    public var desktopFull: SurfaceLayout
     public var launcher: SurfaceLayout
 
     public subscript(surface: PlayerSurface) -> SurfaceLayout {
@@ -229,6 +235,7 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
             case .desktop: return desktop
             case .lockWidget: return lockWidget
             case .lockFull: return lockFull
+            case .desktopFull: return desktopFull
             case .launcher: return launcher
             }
         }
@@ -237,6 +244,7 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
             case .desktop: desktop = newValue
             case .lockWidget: lockWidget = newValue
             case .lockFull: lockFull = newValue
+            case .desktopFull: desktopFull = newValue
             case .launcher: launcher = newValue
             }
         }
@@ -251,16 +259,21 @@ public struct PlayerLayouts: Codable, Hashable, Sendable {
         desktop = try c.decodeIfPresent(SurfaceLayout.self, forKey: .desktop) ?? d.desktop
         lockWidget = try c.decodeIfPresent(SurfaceLayout.self, forKey: .lockWidget) ?? d.lockWidget
         lockFull = try c.decodeIfPresent(SurfaceLayout.self, forKey: .lockFull) ?? d.lockFull
+        // Absent from every layout stored before this surface existed, which is
+        // exactly the case the fallback above was written for.
+        desktopFull =
+            try c.decodeIfPresent(SurfaceLayout.self, forKey: .desktopFull) ?? d.desktopFull
         launcher = try c.decodeIfPresent(SurfaceLayout.self, forKey: .launcher) ?? d.launcher
     }
 
     public init(
         desktop: SurfaceLayout, lockWidget: SurfaceLayout,
-        lockFull: SurfaceLayout, launcher: SurfaceLayout
+        lockFull: SurfaceLayout, desktopFull: SurfaceLayout, launcher: SurfaceLayout
     ) {
         self.desktop = desktop
         self.lockWidget = lockWidget
         self.lockFull = lockFull
+        self.desktopFull = desktopFull
         self.launcher = launcher
     }
 }

@@ -33,6 +33,9 @@ struct PlayerSurfaceView: View {
     var hovering: Bool = false
     /// Frozen data for the settings preview. `nil` means live playback.
     var snapshot: PlayerSnapshot?
+    /// What a single click on the artwork does. Defaults to nothing, so a
+    /// surface with no full-screen view of its own is unaffected.
+    var onExpand: () -> Void = {}
 
     var body: some View {
         // Two bodies, and the split is the point: the live one observes
@@ -45,7 +48,8 @@ struct PlayerSurfaceView: View {
                 layout: layout, style: style, hovering: hovering,
                 data: snapshot, actions: .inert, isLive: false)
         } else {
-            LiveSurfaceBody(layout: layout, style: style, hovering: hovering)
+            LiveSurfaceBody(
+                layout: layout, style: style, hovering: hovering, onExpand: onExpand)
         }
     }
 }
@@ -55,13 +59,18 @@ private struct LiveSurfaceBody: View {
     let layout: SurfaceLayout
     let style: SurfaceStyle
     let hovering: Bool
+    /// What clicking the artwork does. Supplied by the host, because only the
+    /// host knows whether it owns a full-screen view.
+    let onExpand: () -> Void
 
     @ObservedObject private var music = MusicManager.shared
 
     var body: some View {
-        SurfaceBody(
+        var actions = PlayerActions.live(music)
+        actions.expand = onExpand
+        return SurfaceBody(
             layout: layout, style: style, hovering: hovering,
-            data: .live(music), actions: .live(music), isLive: true)
+            data: .live(music), actions: actions, isLive: true)
     }
 }
 
@@ -323,7 +332,12 @@ struct PlayerElementView: View {
             .contentShape(
                 placement.artworkStyle.kind == .vinyl ? AnyShape(Circle()) : AnyShape(Rectangle())
             )
-            .onTapGesture(perform: actions.playPause)
+            // A SINGLE click opens the full-screen view where there is one.
+            // The artwork used to be the play/pause target — deliberately, as
+            // the largest one — but a click that both expands and toggles
+            // playback cannot be built, so play/pause is the transport button's
+            // job now and every default layout has one.
+            .onTapGesture(perform: actions.expand)
         }
     }
 

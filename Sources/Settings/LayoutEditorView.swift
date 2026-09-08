@@ -278,7 +278,7 @@ struct LayoutEditorView: View {
         switch surface {
         case .desktop: return CGSize(width: 320, height: 0)
         case .lockWidget: return CGSize(width: 380, height: 0)
-        case .lockFull: return CGSize(width: 640, height: 400)
+        case .lockFull, .desktopFull: return CGSize(width: 640, height: 400)
         case .launcher: return CGSize(width: 220, height: 0)
         }
     }
@@ -360,7 +360,7 @@ struct LayoutEditorView: View {
         switch surface {
         case .desktop:
             Color(nsColor: SurfaceStyle.muted(PlayerSnapshot.sample.avgColor))
-        case .lockWidget, .lockFull:
+        case .lockWidget, .lockFull, .desktopFull:
             LinearGradient(
                 colors: [Color(white: 0.16), Color(white: 0.08)],
                 startPoint: .top, endPoint: .bottom)
@@ -530,7 +530,13 @@ struct LayoutEditorView: View {
     /// disagree, and the next drag computes against the wrong rows.
     private func normalisingRows(_ input: SurfaceLayout) -> SurfaceLayout {
         var output = input
-        let rows = Set(output.placements.map(\.row)).sorted()
+        // COVERED rows, not starting rows. An element spanning rows 0-2 owns
+        // rows 1 and 2 without starting there; renumbering from start rows
+        // alone would delete those rows out from under it and collapse the
+        // span — the layout would silently lose its shape on the next edit.
+        var covered: Set<Int> = []
+        for placement in output.placements { covered.formUnion(placement.rows) }
+        let rows = covered.sorted()
         var map: [Int: Int] = [:]
         for (index, row) in rows.enumerated() { map[row] = index }
         for index in output.placements.indices {

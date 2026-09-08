@@ -483,7 +483,13 @@ public enum GridSolver {
     /// different row from the thing it was drawn on top of.
     @discardableResult
     private static func compact(_ placements: inout [ElementPlacement]) -> [Int: Int] {
-        let occupied = Set(placements.map(\.row)).sorted()
+        // COVERED rows, not starting rows. A placement spanning rows 0-2 owns
+        // rows 1 and 2 without starting there; treating those as empty deletes
+        // them out from under it, and the span silently collapses the first
+        // time anything is dropped above it.
+        var coveredRows: Set<Int> = []
+        for placement in placements { coveredRows.formUnion(placement.rows) }
+        let occupied = coveredRows.sorted()
         var map: [Int: Int] = [:]
         for (newIndex, oldRow) in occupied.enumerated() { map[oldRow] = newIndex }
         for index in placements.indices {

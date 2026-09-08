@@ -49,6 +49,14 @@ final class PlayerWindowManager: ObservableObject {
         Defaults.publisher(.playerWindowLevel, options: [])
             .sink { [weak self] _ in Task { @MainActor in self?.applyLevel() } }
             .store(in: &cancellables)
+        Defaults.publisher(.showInDock, options: [])
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.panel?.applySpaceBehaviour()
+                    self?.panel?.title = "Cadence Player"
+                }
+            }
+            .store(in: &cancellables)
         Defaults.publisher(.playerFollowsSpaces, options: [])
             .sink { [weak self] _ in
                 Task { @MainActor in self?.panel?.applySpaceBehaviour() }
@@ -131,6 +139,9 @@ final class PlayerWindowManager: ObservableObject {
             MainActor.assumeIsolated { self?.isDeadSpace(at: point) ?? true }
         }
 
+        // Named so it reads as "Cadence Player" in the Window menu rather than
+        // as an untitled window, once a Dock icon makes that menu visible.
+        created.title = "Cadence Player"
         created.setFrameAutosaveName("CadencePlayer")
         if created.frame.origin == .zero { created.setFrameOrigin(defaultOrigin(for: size)) }
         panel = created
@@ -262,6 +273,11 @@ final class PlayerWindowManager: ObservableObject {
 
     private func applyLevel() { panel?.level = Defaults[.playerWindowLevel].windowLevel }
 
+    /// The display the card is currently on. `NSScreen.main` is "the screen
+    /// with the key window", and this panel deliberately cannot become key, so
+    /// it is the wrong answer here.
+    var currentScreen: NSScreen? { panel?.screen }
+
     private func defaultOrigin(for size: NSSize) -> NSPoint {
         guard let visible = NSScreen.main?.visibleFrame else { return .zero }
         return NSPoint(x: visible.maxX - size.width - 40, y: visible.minY + 40)
@@ -309,7 +325,8 @@ private struct PlayerRootView: View {
                 .desktop, albumColor: music.avgColor, tinted: tinted && music.hasTrack,
                 scale: layouts.desktop.geometry.contentScale,
                 sliderColor: sliderColour, accentColor: accentColour),
-            hovering: manager.isHovering
+            hovering: manager.isHovering,
+            onExpand: { DesktopFullScreenController.shared.toggle() }
         )
         .background(card)
         .overlay(alignment: .topTrailing) { closeButton }

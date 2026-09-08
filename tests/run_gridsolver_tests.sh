@@ -83,7 +83,13 @@ for (name, surface) in [
 
     // Rows contiguous from zero — a gap means the author miscounted, and the
     // solver would compact it away, hiding the mistake.
-    let rows = Set(surface.placements.map(\.row)).sorted()
+    //
+    // COVERED rows, not starting rows. An element spanning rows 0-2 occupies
+    // rows 1 and 2 without starting there, so counting start rows alone reports
+    // a phantom gap for every layout that uses rowSpan.
+    var covered: Set<Int> = []
+    for placement in surface.placements { covered.formUnion(placement.rows) }
+    let rows = covered.sorted()
     ok("\(name): rows contiguous from 0", rows == Array(0..<rows.count), "\(rows)")
 
     // Nothing may hang off the right-hand edge.
